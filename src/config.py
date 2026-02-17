@@ -209,10 +209,20 @@ class VerificationConfig:
 
 @dataclass
 class DataConfig:
-    # CourtListener API
-    courtlistener_base_url: str = "https://www.courtlistener.com/api/rest/v3/"
-    courtlistener_api_key: Optional[str] = os.getenv("COURTLISTENER_API_KEY")
-    courtlistener_rate_limit: float = 0.5  # seconds between requests
+    # CourtListener API v4
+    courtlistener_base_url: str = "https://www.courtlistener.com/api/rest/v4/"
+    courtlistener_token: Optional[str] = os.getenv("COURTLISTENER_TOKEN")
+    courtlistener_rate_limit: float = 0.72  # seconds between requests (5000/hr)
+
+    # Court ID → court_level mapping
+    court_level_map: Dict[str, str] = field(default_factory=lambda: {
+        "scotus": "scotus",
+        "ca1": "circuit", "ca2": "circuit", "ca3": "circuit",
+        "ca4": "circuit", "ca5": "circuit", "ca6": "circuit",
+        "ca7": "circuit", "ca8": "circuit", "ca9": "circuit",
+        "ca10": "circuit", "ca11": "circuit",
+        "cadc": "circuit", "cafc": "circuit",
+    })
 
     # Target corpus size
     target_scotus_cases: int = 1200
