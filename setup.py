@@ -15,12 +15,8 @@ setup(
         "transformers>=4.36.0",
         "sentence-transformers>=2.2.2",
         "spacy>=3.7.0",
-        "faiss-cpu>=1.7.4",
         "chromadb>=0.4.0",
         "rank-bm25>=0.2.2",
-        "openai>=1.0.0",
-        "anthropic>=0.18.0",
-        "google-generativeai>=0.4.0",
         "eyecite>=2.6.0",
         "rapidfuzz>=3.0.0",
         "pymupdf>=1.23.0",
@@ -39,9 +35,6 @@ setup(
         "dev": [
             "pytest>=7.0.0",
             "pytest-asyncio>=0.21.0",
-        ],
-        "cloud": [
-            "pinecone-client>=3.0.0",
         ],
     },
 )

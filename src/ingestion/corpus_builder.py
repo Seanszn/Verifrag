@@ -404,20 +404,10 @@ class CorpusBuilder:
 
     @staticmethod
     def _clean_legal_text(text: str) -> str:
-        """
-        Normalize legal text while preserving paragraph boundaries.
-
-        Key behavior:
-        - Fix line-wrap hyphenation: "con-\ntract" -> "contract"
-        - Keep paragraph breaks
-        - Collapse noisy internal whitespace
-        """
         # Normalize line endings first.
         text = text.replace("\r\n", "\n").replace("\r", "\n")
 
         # Repair hyphenated line-wraps:
-        #   "con-\ntract" -> "contract"
-        #   "con-  \n   tract" -> "contract"
         text = re.sub(r"(?<=\w)-\s*\n\s*(?=\w)", "", text)
 
         # Collapse intra-line spacing noise while preserving line boundaries.

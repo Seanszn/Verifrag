@@ -1,4 +1,4 @@
-"""Tests for all LLM backends."""
+"""Tests for local Ollama backend."""
 
 import pytest
 

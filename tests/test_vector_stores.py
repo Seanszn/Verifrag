@@ -1,4 +1,4 @@
-"""Tests for all vector store backends."""
+"""Tests for ChromaDB vector store backend."""
 
 import pytest
 

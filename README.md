@@ -4,7 +4,7 @@ Claim-level verification system for legal AI. Detects hallucinations in AI-gener
 
 ## Overview
 
-Commercial legal AI tools hallucinate at 17-33% rates (Stanford Law, 2024). They cite documents but don't verify that claims about those documents are accurate. LegalVerifiRAG adds a verification layer that:
+Commercial legal AI tools hallucinate at 17-33% rates (Stanford Law, 2024). They cite documents but do not verify that claims about those documents are accurate. LegalVerifiRAG adds a verification layer that:
 
 1. Retrieves relevant legal passages
 2. Generates a response grounded in those passages
@@ -12,63 +12,166 @@ Commercial legal AI tools hallucinate at 17-33% rates (Stanford Law, 2024). They
 4. Verifies each claim against the retrieved sources using NLI
 5. Outputs the response with inline verification badges
 
-## Installation
+## Local-First Default
+
+Local deployment is the default configuration:
+
+- `DEPLOYMENT_MODE=local`
+- `LLM_MODEL=llama3.1:8b`
+- `OLLAMA_HOST=http://localhost:11434`
+- `CHROMA_PATH=data/index/chroma`
+
+This is already the default in `.env.example` and `src/config.py`.
+
+## Quick Start (Local Default)
+
+Run from the `legalverifirag/` directory.
+
+### Windows (PowerShell)
+
+```powershell
+.\scripts\setup_local.ps1
+.\scripts\run_local.ps1
+```
+
+### Linux (Bash)
+
+```bash
+chmod +x scripts/setup_local.sh scripts/run_local.sh
+./scripts/setup_local.sh
+./scripts/run_local.sh
+```
+
+## What The Setup Scripts Do
+
+- Create a virtual environment (`venv`) if missing
+- Install Python dependencies from `requirements.txt`
+- Download the spaCy model (`en_core_web_sm`)
+- Create `.env` from `.env.example` if missing
+- Ensure `.env` defaults to local mode
+- Create local data directories (`data/raw`, `data/processed`, `data/index`, `data/eval`)
+- Optionally pull `llama3.1:8b` if `ollama` is installed
+
+## Manual Setup (Equivalent)
 
 ```bash
 # Create virtual environment
 python -m venv venv
-source venv/bin/activate  # or `venv\Scripts\activate` on Windows
+source venv/bin/activate  # Windows PowerShell: .\venv\Scripts\Activate.ps1
 
 # Install dependencies
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 
 # Download spaCy model
 python -m spacy download en_core_web_sm
 
-# Install Ollama and pull model (for local deployment)
+# Create local config
+cp .env.example .env   # Windows PowerShell: Copy-Item .env.example .env
+
+# Install Ollama separately (https://ollama.com), then pull local model
 ollama pull llama3.1:8b
 ```
 
 ## Configuration
 
-Copy `.env.example` to `.env` and configure your settings:
+`.env.example` is local-only by default.
+
+## Usage (Current Repository)
 
 ```bash
-cp .env.example .env
-```
+# Download a small SCOTUS test batch (recommended first)
+python scripts/download_corpus.py --scotus --limit 10
 
-## Usage
+# Full corpus sync examples
+python scripts/download_corpus.py --all
+python scripts/download_corpus.py --update
 
-```bash
-# Build corpus
-python scripts/download_corpus.py
-
-# Build indices
+# Build indices (script exists but is currently a placeholder)
 python scripts/build_index.py
 
-# Run the app
+# Run app (file exists but is currently a placeholder)
 streamlit run src/app.py
 ```
 
+## Weekly Corpus Updates (Incremental)
+
+Use the wrapper scripts below to run `scripts/download_corpus.py --update` on a schedule. They use the existing sync state to fetch only new/updated cases and write timestamped logs.
+
+### Windows (PowerShell / Task Scheduler)
+
+```powershell
+.\scripts\weekly_corpus_update.ps1
+```
+
+Optional flags:
+
+```powershell
+.\scripts\weekly_corpus_update.ps1 -VerboseDownload
+.\scripts\weekly_corpus_update.ps1 -Limit 100
+.\scripts\weekly_corpus_update.ps1 -OutputDir data\raw
+```
+
+Task Scheduler action example:
+
+```text
+Program/script: powershell.exe
+Add arguments: -ExecutionPolicy Bypass -File "E:\path\to\legalverifirag\scripts\weekly_corpus_update.ps1"
+Start in: E:\path\to\legalverifirag
+```
+
+### Linux (Bash / cron)
+
+```bash
+chmod +x scripts/weekly_corpus_update.sh
+./scripts/weekly_corpus_update.sh
+```
+
+Optional env vars:
+
+```bash
+VERBOSE_DOWNLOAD=1 ./scripts/weekly_corpus_update.sh
+LIMIT=100 ./scripts/weekly_corpus_update.sh
+OUTPUT_DIR=data/raw ./scripts/weekly_corpus_update.sh
+```
+
+Cron example (weekly Monday at 2:00 AM):
+
+```cron
+0 2 * * 1 cd /path/to/legalverifirag && ./scripts/weekly_corpus_update.sh
+```
+
+Note: This updates the corpus JSONL files. Rebuilding search indices after updates will require `scripts/build_index.py`, which is currently a placeholder in this repository.
+
+## Current Repository Status
+
+This repository contains a mix of implemented modules and scaffolding:
+
+- `scripts/download_corpus.py` is implemented and usable
+- `scripts/build_index.py` is currently a placeholder
+- `src/app.py` and `src/pipeline.py` are currently placeholders
+
+The setup and run scripts are still useful for provisioning a new machine and standardizing local configuration.
+
 ## Project Structure
 
-```
+```text
 legalverifirag/
-├── src/
-│   ├── ingestion/      # Document downloading and processing
-│   ├── indexing/       # Vector stores and search indices
-│   ├── retrieval/      # Hybrid search
-│   ├── generation/     # LLM backends and prompts
-│   ├── verification/   # Claim verification algorithms
-│   ├── pipeline.py     # End-to-end orchestration
-│   └── app.py          # Streamlit UI
-├── data/
-│   ├── raw/            # Downloaded cases and statutes
-│   ├── processed/      # Chunked documents
-│   ├── index/          # FAISS and BM25 indices
-│   └── eval/           # Test datasets
-├── tests/              # Unit tests
-└── scripts/            # Utility scripts
+|-- src/
+|   |-- ingestion/      # Document downloading and processing
+|   |-- indexing/       # Vector stores and search indices
+|   |-- retrieval/      # Hybrid search
+|   |-- generation/     # LLM backends and prompts
+|   |-- verification/   # Claim verification algorithms
+|   |-- pipeline.py     # End-to-end orchestration
+|   `-- app.py          # Streamlit UI
+|-- data/
+|   |-- raw/            # Downloaded cases and statutes
+|   |-- processed/      # Chunked documents
+|   |-- index/          # ChromaDB and BM25 indices
+|   `-- eval/           # Test datasets
+|-- tests/              # Unit tests
+`-- scripts/            # Utility scripts
 ```
 
 ## License

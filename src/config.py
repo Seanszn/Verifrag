@@ -2,7 +2,7 @@
 LegalVerifiRAG Configuration
 
 All configurable parameters in one place.
-Supports local, cloud, and hybrid deployment modes.
+Supports local-first deployment.
 """
 
 import os
@@ -26,117 +26,32 @@ EVAL_DIR = DATA_DIR / "eval"
 # ============== DEPLOYMENT MODES ==============
 
 class DeploymentMode(Enum):
-    LOCAL = "local"           # All local: Ollama + FAISS
-    CLOUD = "cloud"           # All cloud: OpenAI + Pinecone
-    HYBRID = "hybrid"         # Smart routing based on content sensitivity
-
-class LLMProvider(Enum):
-    OLLAMA = "ollama"
-    OPENAI = "openai"
-    AZURE_OPENAI = "azure_openai"
-    ANTHROPIC = "anthropic"
-    GEMINI = "gemini"
-
-class VectorStoreProvider(Enum):
-    FAISS = "faiss"
-    CHROMA = "chroma"
-    PINECONE = "pinecone"
+    LOCAL = "local"           # Ollama + ChromaDB
 
 # Current deployment mode (from environment)
-DEPLOYMENT_MODE = DeploymentMode(os.getenv("DEPLOYMENT_MODE", "local"))
+DEPLOYMENT_MODE = DeploymentMode.LOCAL
 
 # ============== LLM CONFIGURATION ==============
 
 @dataclass
 class LLMConfig:
-    """Configuration for LLM providers."""
+    """Configuration for the Ollama backend."""
 
-    # Provider selection
-    provider: LLMProvider = field(
-        default_factory=lambda: LLMProvider(os.getenv("LLM_PROVIDER", "ollama"))
-    )
-
-    # Ollama (local)
-    ollama_model: str = os.getenv("LLM_MODEL", "llama3.1:8b")
-    ollama_host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-
-    # OpenAI
-    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-    openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
-
-    # Azure OpenAI
-    azure_endpoint: Optional[str] = os.getenv("AZURE_OPENAI_ENDPOINT")
-    azure_api_key: Optional[str] = os.getenv("AZURE_OPENAI_API_KEY")
-    azure_deployment: str = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4")
-    azure_api_version: str = "2024-02-01"
-
-    # Anthropic
-    anthropic_model: str = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
-    anthropic_api_key: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
-
-    # Google Gemini
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
-    google_api_key: Optional[str] = os.getenv("GOOGLE_API_KEY")
+    model: str = os.getenv("LLM_MODEL", "llama3.1:8b")
+    host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
     # Generation parameters
     temperature: float = 0.1
     max_tokens: int = 2048
 
-    # Cost tracking
-    budget_limit: float = float(os.getenv("LLM_BUDGET_LIMIT", "10.0"))
-    enable_cost_tracking: bool = os.getenv("ENABLE_COST_TRACKING", "true").lower() == "true"
-
-# ============== HYBRID MODE CONFIGURATION ==============
-
-@dataclass
-class HybridConfig:
-    """Configuration for hybrid local/cloud routing."""
-
-    # Provider for privileged/confidential content (always local)
-    privileged_provider: LLMProvider = field(
-        default_factory=lambda: LLMProvider(os.getenv("HYBRID_PRIVILEGED_PROVIDER", "ollama"))
-    )
-
-    # Provider for non-sensitive queries (can be cloud for better quality)
-    default_provider: LLMProvider = field(
-        default_factory=lambda: LLMProvider(os.getenv("HYBRID_DEFAULT_PROVIDER", "openai"))
-    )
-
-    # Keywords/patterns that indicate privileged content
-    privileged_indicators: List[str] = field(default_factory=lambda: [
-        "attorney-client",
-        "privileged",
-        "confidential",
-        "work product",
-        "settlement",
-        "client:",
-        "matter:",
-    ])
-
-    # Always use local for user-uploaded documents
-    local_for_uploads: bool = True
-
-    # Quality threshold - use cloud if local confidence is below this
-    quality_threshold: float = 0.7
-
 # ============== VECTOR STORE CONFIGURATION ==============
 
 @dataclass
 class VectorStoreConfig:
-    """Configuration for vector database."""
-
-    provider: VectorStoreProvider = field(
-        default_factory=lambda: VectorStoreProvider(os.getenv("VECTOR_STORE", "faiss"))
-    )
+    """Configuration for the local ChromaDB store."""
 
     # Local paths
-    faiss_index_path: Path = INDEX_DIR / "faiss"
-    chroma_path: Path = INDEX_DIR / "chroma"
-
-    # Pinecone (cloud)
-    pinecone_api_key: Optional[str] = os.getenv("PINECONE_API_KEY")
-    pinecone_index: str = os.getenv("PINECONE_INDEX", "legalverifirag")
-    pinecone_namespace: str = "default"
+    chroma_path: Path = Path(os.getenv("CHROMA_PATH", str(INDEX_DIR / "chroma")))
 
 # ============== MODELS ==============
 
@@ -242,22 +157,14 @@ class DataConfig:
 
 # ============== COST TRACKING ==============
 
-# Pricing per 1M tokens (updated Feb 2025)
+# Pricing per 1M tokens
 LLM_PRICING = {
-    "gpt-4o": {"input": 2.50, "output": 10.00},
-    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
-    "gpt-4-turbo": {"input": 10.00, "output": 30.00},
-    "claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00},
-    "claude-3-haiku-20240307": {"input": 0.25, "output": 1.25},
-    "gemini-1.5-flash": {"input": 0.075, "output": 0.30},
-    "gemini-1.5-pro": {"input": 1.25, "output": 5.00},
     "llama3.1:8b": {"input": 0.0, "output": 0.0},  # Local = free
 }
 
 # ============== INSTANCES ==============
 
 LLM = LLMConfig()
-HYBRID = HybridConfig()
 VECTOR_STORE = VectorStoreConfig()
 MODELS = ModelConfig()
 RETRIEVAL = RetrievalConfig()
