@@ -20,12 +20,7 @@ fi
 
 export DEPLOYMENT_MODE=local
 
-if [[ ! -f .env ]]; then
-  echo "Warning: .env not found. Run ./scripts/setup_local.sh first to create a local default .env." >&2
-fi
+echo "Starting FastAPI backend..."
+echo "API at http://127.0.0.1:8000"
 
-echo "Starting Streamlit in local mode..."
-echo "DEPLOYMENT_MODE=${DEPLOYMENT_MODE} API_BASE_URL=${API_BASE_URL:-} LLM_MODEL=${LLM_MODEL:-} OLLAMA_HOST=${OLLAMA_HOST:-}"
-echo "Start the API first with ./scripts/run_api.sh"
-
-exec "${VENV_PYTHON}" -m streamlit run src/app.py
+exec "${VENV_PYTHON}" -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000

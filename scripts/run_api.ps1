@@ -20,12 +20,7 @@ if (-not (Test-Path $VenvPython)) {
 
 $env:DEPLOYMENT_MODE = "local"
 
-if (-not (Test-Path ".env")) {
-    Write-Warning ".env not found. Run .\scripts\setup_local.ps1 first to create a local default .env."
-}
+Write-Host "Starting FastAPI backend..."
+Write-Host "API at http://127.0.0.1:8000"
 
-Write-Host "Starting Streamlit in local mode..."
-Write-Host "DEPLOYMENT_MODE=$env:DEPLOYMENT_MODE API_BASE_URL=$env:API_BASE_URL LLM_MODEL=$env:LLM_MODEL OLLAMA_HOST=$env:OLLAMA_HOST"
-Write-Host "Start the API first with .\scripts\run_api.ps1"
-
-& $VenvPython -m streamlit run src/app.py
+& $VenvPython -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
