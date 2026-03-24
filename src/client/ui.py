@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+import bcrypt
+from src.storage.database import Database
 
 import streamlit as st
 
@@ -16,6 +18,13 @@ PAGE_RESPONSE = "response"
 SUPPORTED_UPLOAD_TYPES = ["pdf", "txt", "docx", "md"]
 TEMP_UPLOAD_DIR = Path(__file__).resolve().parents[2] / "temp_uploads"
 
+
+@st.cache_resource
+def get_db() -> Database:
+    """Initialize and cache the database connection."""
+    db = Database()
+    db.initialize()
+    return db
 
 def initialize_state() -> None:
     """Initialize the session keys used by the prototype pages."""
@@ -36,14 +45,26 @@ def initialize_state() -> None:
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
 
-
 def apply_styles() -> None:
     """Inject light custom styling for the client-facing flow."""
 
     st.markdown(
         """
         <style>
+        
         @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+        
+        /* Ensure standard inputs are full width */
+        div[data-testid="stTextInput"],
+        div[data-testid="stTextInput"] > div {
+            width: 100% !important;
+        }
+
+        /* NEW: Force Base Web password containers to full width */
+        div[data-testid="stTextInput"] div[data-baseweb="input"],
+        div[data-testid="stTextInput"] div[data-baseweb="base-input"] {
+            width: 100% !important;
+        }
 
         html, body, [class*="css"], [data-testid="stAppViewContainer"], [data-testid="stMarkdownContainer"] {
             font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
@@ -53,20 +74,31 @@ def apply_styles() -> None:
             font-family: "IBM Plex Mono", Consolas, monospace;
         }
 
-        .stApp {
-            background: linear-gradient(180deg, #f6f7f9 0%, #eef1f5 100%);
+        /* 1. Force Streamlit's main view container to use your gradient */
+        [data-testid="stAppViewContainer"] {
+            background: linear-gradient(180deg, #f6f7f9 0%, #eef1f5 100%) !important;
         }
 
+        /* 2. Turn the center content column into a floating white card to contrast with the gray background */
         .block-container {
-            padding-top: 1.25rem;
-            padding-bottom: 2.5rem;
+            background: #ffffff;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+            border: 1rem Top, 2rem Right, 2rem Left, 1rem Bottom
+            padding: 3rem 2rem !important;
+            margin-top: 2rem;
+            margin-bottom: 2rem;
+            max-width: 1200px !important;
         }
 
-        .vr-header-anchor + div[data-testid="stHorizontalBlock"] {
+        /* Target the horizontal block that contains the brand text */
+        div[data-testid="columns"]:has(.vr-brand),
+        div[data-testid="stHorizontalBlock"]:has(.vr-brand) {
             background: #121417;
             border: 1px solid #1f2937;
             border-radius: 20px;
             padding: 0.85rem 1rem;
+            margin-top: -5rem !important; /* NEW: Force the bar to pull itself upwards */
             margin-bottom: 2rem;
             align-items: center;
         }
@@ -77,17 +109,7 @@ def apply_styles() -> None:
             font-weight: 700;
             letter-spacing: 0.02em;
         }
-
-        .vr-header-anchor + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] button {
-            background: #f3f4f6;
-            border: none;
-            border-radius: 999px;
-            color: #111827;
-            font-weight: 600;
-            min-height: 2.55rem;
-            width: 100%;
-        }
-
+        
         .vr-page-title {
             color: #111827;
             font-size: 2rem;
@@ -114,25 +136,39 @@ def apply_styles() -> None:
             font-weight: 600;
         }
 
+        /* 1. Apply your custom border and background to the outer wrapper */
+        div[data-baseweb="input"],
+        div[data-baseweb="textarea"] {
+            border-radius: 12px !important;
+            border: 2px solid #8d8d8d !important;
+            background: #ffffff !important;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        /* 2. Apply your custom blue focus state to the wrapper when clicked */
+        div[data-baseweb="input"]:focus-within,
+        div[data-baseweb="textarea"]:focus-within {
+            border-color: #0f62fe !important;
+            box-shadow: 0 0 0 1px #0f62fe !important;
+        }
+
+        /* 3. Strip the styling off the inner input tag so it blends perfectly into the new wrapper */
         .stTextInput input,
         .stTextArea textarea {
-            border-radius: 12px;
-            border: 2px solid #8d8d8d;
-            background: #ffffff;
+            width: 100% !important;
+            box-sizing: border-box !important;
+            border: none !important;
+            background: transparent !important;
+            box-shadow: none !important;
             color: #161616;
             font-size: 1rem;
             padding-left: 0.9rem;
+            outline: none !important;
         }
 
         .stTextInput input::placeholder,
         .stTextArea textarea::placeholder {
             color: #6f6f6f;
-        }
-
-        .stTextInput input:focus,
-        .stTextArea textarea:focus {
-            border-color: #0f62fe;
-            box-shadow: 0 0 0 1px #0f62fe;
         }
 
         .vr-login-anchor + div[data-testid="stVerticalBlock"] [data-testid="stButton"] button,
@@ -152,15 +188,37 @@ def apply_styles() -> None:
         }
 
         div[data-testid="stButton"] button[kind="primary"]:hover {
-            background: #000000;
-            color: #ffffff;
-            border-color: #000000;
+            background: #6b7280 !important; /* A nice, noticeable lighter grey */
+            color: #ffffff !important;
+            border-color: #6b7280 !important;
+        }
+
+        /* 1. Give the header button the same rounded pill shape as the others */
+        div[data-testid="columns"]:has(.vr-brand) button,
+        div[data-testid="stHorizontalBlock"]:has(.vr-brand) button {
+            border-radius: 999px !important;
+            font-weight: 600 !important;
+        }
+
+        /* 2. Target the hover state of the button inside the header */
+        div[data-testid="columns"]:has(.vr-brand) button:hover,
+        div[data-testid="stHorizontalBlock"]:has(.vr-brand) button:hover {
+            background-color: #e5e7eb !important; 
+            border-color: #e5e7eb !important;
+            color: #111827 !important;
+        }
+
+        /* 3. Force the inner text elements to turn dark on hover */
+        div[data-testid="columns"]:has(.vr-brand) button:hover *,
+        div[data-testid="stHorizontalBlock"]:has(.vr-brand) button:hover * {
+            color: #111827 !important;
         }
 
         .vr-home-anchor + div[data-testid="stVerticalBlock"] [data-testid="stButton"] button {
             min-height: 3.3rem;
         }
 
+        
         .vr-panel-label {
             color: #111827;
             font-size: 1rem;
@@ -201,7 +259,26 @@ def apply_styles() -> None:
             text-align: left;
             justify-content: flex-start;
         }
+
+        /* Hide the "Press Enter to apply" helper text */
+        div[data-testid="InputInstructions"] {
+            display: none !important;
+            visibility: hidden !important;
+        }
+
+        /* Hide the default Streamlit header (with the Deploy button) */
+        header[data-testid="stHeader"] {
+            display: none !important;
+            visibility: hidden !important;
+        }
+        
+        /* Optional: Hide the default Streamlit footer "Made with Streamlit" */
+        footer {
+            display: none !important;
+        }
+
         </style>
+
         """,
         unsafe_allow_html=True,
     )
@@ -231,14 +308,17 @@ def logout() -> None:
 
 def render_header(action_label: str, action_callback) -> None:
     """Render the shared top header bar."""
-
-    st.markdown('<div class="vr-header-anchor"></div>', unsafe_allow_html=True)
-    brand_col, action_col = st.columns([6, 1.5])
+    brand_col, action_col = st.columns([6, 1.5], vertical_alignment="center")
     with brand_col:
-        st.markdown('<div class="vr-brand">VerifRAG</div>', unsafe_allow_html=True)
+        st.markdown('<div class="vr-brand">VerifiRAG</div>', unsafe_allow_html=True)
     with action_col:
-        if st.button(action_label, key=f"header_{st.session_state['page']}_{action_label}", use_container_width=True):
-            action_callback()
+        # Use on_click so the callback runs BEFORE the script reruns
+        st.button(
+            action_label, 
+            key=f"header_{st.session_state['page']}_{action_label}", 
+            use_container_width=True,
+            on_click=action_callback
+        )
 
 
 def require_auth() -> None:
@@ -356,8 +436,87 @@ def render_upload_panel() -> list[Any]:
             accept_multiple_files=True,
             label_visibility="collapsed",
         )
+    
 
+def render_login_page() -> None:
+    # Toggle between Login and Register modes
+    mode_label = "Switch to Login" if st.session_state.get("show_register_notice") else "Register"
+    
+    def toggle_mode():
+        st.session_state["show_register_notice"] = not st.session_state.get("show_register_notice", False)
+        
+    render_header(mode_label, toggle_mode)
 
+    is_registering = st.session_state.get("show_register_notice", False)
+    db = get_db()
+
+    _, form_col, _ = st.columns([1.2, 1.6, 1.2])
+    with form_col:
+        title_text = "Create an " if is_registering else "Sign into your "
+        st.markdown(
+            f'<div class="vr-page-title"><span class="vr-page-title-muted">{title_text}</span>account</div>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown('<div class="vr-login-anchor"></div>', unsafe_allow_html=True)
+        username = st.text_input("Username", key="login_username", placeholder="Enter your username")
+        password = st.text_input("Password", type="password", key="login_password", placeholder="Enter your password")
+        
+        st.write("")
+        st.write("")
+        # Note: We removed the 2FA Passkey input to match the database schema
+
+        button_label = "Register Account" if is_registering else "Sign In"
+        
+        if st.button(button_label, key="login_submit", type="primary", use_container_width=True):
+            username_val = username.strip()
+            
+            if not username_val or not password:
+                st.error("Please fill out both fields.")
+                return
+
+            # --- REGISTRATION FLOW ---
+            if is_registering:
+                # Check if user already exists using Sean's method
+                if db.get_user_by_username(username_val):
+                    st.error("Username already exists. Please choose another.")
+                    return
+                
+                # Hash the password and save to DB
+                salt = bcrypt.gensalt()
+                hashed_pw = bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
+                
+                try:
+                    db.create_user(username_val, hashed_pw)
+                    st.success("Registration successful! Switching to login...")
+                    st.session_state["show_register_notice"] = False
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Database error: {str(e)}")
+
+            # --- LOGIN FLOW ---
+            else:
+                user_row = db.get_user_by_username(username_val)
+                
+                if user_row:
+                    # Verify the hash
+                    stored_hash = user_row["password_hash"]
+                    if bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8')):
+                        st.session_state["authenticated"] = True
+                        
+                        # Store the database User ID in session state for later use
+                        st.session_state["user"] = {
+                            "id": user_row["id"], 
+                            "username": user_row["username"]
+                        }
+                        st.session_state["page"] = PAGE_HOME
+                        st.rerun()
+                    else:
+                        st.error("Invalid username or password.")
+                else:
+                    st.error("Invalid username or password.")
+                    
+'''
 def render_login_page() -> None:
     render_header("Register", lambda: st.session_state.__setitem__("show_register_notice", True))
 
@@ -398,7 +557,7 @@ def render_login_page() -> None:
                 st.session_state["page"] = PAGE_HOME
                 st.session_state["show_register_notice"] = False
                 st.rerun()
-
+'''
 
 def render_home_page() -> None:
     require_auth()
