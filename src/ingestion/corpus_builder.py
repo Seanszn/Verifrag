@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator, Dict, List, Optional, Set
+from ingestion.api_connectors.courtlistener_client import CourtListenerClient
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -485,3 +486,5 @@ class CorpusBuilder:
         """Save sync state to JSON file."""
         with open(self.sync_state_path, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2)
+    
+    

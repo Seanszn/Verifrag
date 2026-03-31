@@ -143,7 +143,7 @@ class VerificationConfig:
 @dataclass
 class DataConfig:
     courtlistener_base_url: str = "https://www.courtlistener.com/api/rest/v4/"
-    courtlistener_token: Optional[str] = os.getenv("COURTLISTENER_TOKEN")
+    courtlistener_token: Optional[str] = os.getenv("COURTLISTENER_API_TOKEN")
     courtlistener_rate_limit: float = 0.72
     court_level_map: Dict[str, str] = field(default_factory=lambda: {
         "scotus": "scotus",
