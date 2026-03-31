@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 import bcrypt
+import base64
 from src.storage.database import Database
 
 import streamlit as st
@@ -578,39 +579,85 @@ def render_home_page() -> None:
         if st.button("Upload Documents", key="home_upload", use_container_width=True):
             navigate(PAGE_UPLOAD)
 
-
 def render_upload_page() -> None:
+    # 1. Standard Page Setup (Brings back the Black Bar and Title)
     require_auth()
     render_header("Home", lambda: navigate(PAGE_HOME))
     render_page_intro("Test Upload Query Page", "Add source documents before asking questions.")
 
+    # 2. Icon Logic
+    icon_base64 = ""
+    icon_path = Path(__file__).parent.parent.parent / "assets" / "upload.png"
+    if icon_path.exists():
+        with open(icon_path, "rb") as f:
+            icon_base64 = base64.b64encode(f.read()).decode()
+
+    # 3. Your Custom Uploader CSS
+    st.markdown(
+        f"""
+        <style>
+        [data-testid="stFileUploader"] {{ display: flex; justify-content: center; width: 100%; }}
+        [data-testid="stFileUploader"] section {{
+            position: relative; width: 100%; max-width: 500px; height: 220px;
+            margin: 0 auto; border-radius: 16px; border: 2px dashed #bfc5cd;
+            background: #f3f4f6; display: flex; align-items: center;
+            justify-content: center; cursor: pointer; transition: all 0.2s ease-in-out;
+        }}
+        [data-testid="stFileUploader"] section:hover {{ border-color: #6b7280; background: #e5e7eb; }}
+        [data-testid="stFileUploader"] button, [data-testid="stFileUploader"] small,
+        [data-testid="stFileUploader"] svg, [data-testid="stFileUploader"] p {{ display: none !important; }}
+        [data-testid="stFileUploader"] section > div {{ opacity: 0; }}
+        [data-testid="stFileUploader"] section::after {{
+            content: ""; width: 70px; height: 70px;
+            background-image: url("data:image/png;base64,{icon_base64}");
+            background-size: contain; background-repeat: no-repeat;
+            background-position: center; position: absolute;
+        }}
+        [data-testid="stFileUploader"] section::before {{
+            content: "Upload Files"; position: absolute; bottom: 20px;
+            font-size: 14px; color: #6b7280;
+        }}
+
+        /* Custom styling for the instruction text */
+        .upload-instruction {{
+            text-align: center;
+            color: #6b7280;
+            font-size: 0.95rem;
+            margin-top: 15px;
+            margin-bottom: 5px;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # 4. Layout & Logic
     _, center, _ = st.columns([0.7, 2.2, 0.7])
     with center:
-        uploaded_files = render_upload_panel()
+        uploaded_files = st.file_uploader(
+            "",
+            type=SUPPORTED_UPLOAD_TYPES,
+            accept_multiple_files=True,
+            label_visibility="collapsed",
+        )
+
+        # NEW: Instruction text added here
+        st.markdown(
+            '<p class="upload-instruction">Use the upload box above to drag files in or click to browse files</p>', 
+            unsafe_allow_html=True
+        )
 
         if uploaded_files:
             st.write("")
-            st.caption(f"{len(uploaded_files)} file(s) selected")
-            chips = "".join(
-                f'<span class="vr-file-chip">{Path(file.name).name}</span>'
-                for file in uploaded_files
-            )
-            st.markdown(chips, unsafe_allow_html=True)
+            st.markdown("**Selected Files:**")
+            for file in uploaded_files:
+                st.markdown(f"📄 {file.name}")
 
-        if st.session_state["uploaded_files"]:
-            current_sources = ", ".join(file["name"] for file in st.session_state["uploaded_files"])
-            st.info(f"Current session sources: {current_sources}")
-
-        st.markdown('<div class="vr-upload-actions"></div>', unsafe_allow_html=True)
-        manual_col, submit_col = st.columns(2)
-        with manual_col:
-            if st.button("Manual Upload", key="manual_upload", use_container_width=True):
-                st.session_state["show_upload_hint"] = True
-        with submit_col:
+        st.write("")
+        # Centering the Submit button
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
             submit_clicked = st.button("Submit", key="submit_upload", type="primary", use_container_width=True)
-
-        if st.session_state["show_upload_hint"]:
-            st.caption("Use the upload box above to drag files in or click Browse files.")
 
         if submit_clicked:
             if not uploaded_files:
@@ -618,12 +665,85 @@ def render_upload_page() -> None:
             else:
                 upload_result = process_uploaded_files(list(uploaded_files))
                 st.session_state["uploaded_files"] = upload_result["files"]
-                st.session_state["upload_notice"] = (
-                    f"Uploaded {upload_result['file_count']} file(s): "
-                    + ", ".join(upload_result["filenames"])
-                )
+                st.session_state["upload_notice"] = f"Uploaded {upload_result['file_count']} file(s)."
                 navigate(PAGE_RESPONSE)
 
+'''
+
+def render_upload_page() -> None:
+    # 1. Standard Page Setup (Brings back the Black Bar and Title)
+    require_auth()
+    render_header("Home", lambda: navigate(PAGE_HOME))
+    render_page_intro("Test Upload Query Page", "Add source documents before asking questions.")
+
+    # 2. Icon Logic
+    icon_base64 = ""
+    icon_path = Path(__file__).parent.parent.parent / "assets" / "upload.png"
+    if icon_path.exists():
+        with open(icon_path, "rb") as f:
+            icon_base64 = base64.b64encode(f.read()).decode()
+
+    # 3. Your Custom Uploader CSS
+    st.markdown(
+        f"""
+        <style>
+        [data-testid="stFileUploader"] {{ display: flex; justify-content: center; width: 100%; }}
+        [data-testid="stFileUploader"] section {{
+            position: relative; width: 100%; max-width: 500px; height: 220px;
+            margin: 0 auto; border-radius: 16px; border: 2px dashed #bfc5cd;
+            background: #f3f4f6; display: flex; align-items: center;
+            justify-content: center; cursor: pointer; transition: all 0.2s ease-in-out;
+        }}
+        [data-testid="stFileUploader"] section:hover {{ border-color: #6b7280; background: #e5e7eb; }}
+        [data-testid="stFileUploader"] button, [data-testid="stFileUploader"] small,
+        [data-testid="stFileUploader"] svg, [data-testid="stFileUploader"] p {{ display: none !important; }}
+        [data-testid="stFileUploader"] section > div {{ opacity: 0; }}
+        [data-testid="stFileUploader"] section::after {{
+            content: ""; width: 70px; height: 70px;
+            background-image: url("data:image/png;base64,{icon_base64}");
+            background-size: contain; background-repeat: no-repeat;
+            background-position: center; position: absolute;
+        }}
+        [data-testid="stFileUploader"] section::before {{
+            content: "Upload Files"; position: absolute; bottom: 20px;
+            font-size: 14px; color: #6b7280;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # 4. Layout & Logic (Brings back the Submit Button)
+    _, center, _ = st.columns([0.7, 2.2, 0.7])
+    with center:
+        uploaded_files = st.file_uploader(
+            "",
+            type=SUPPORTED_UPLOAD_TYPES,
+            accept_multiple_files=True,
+            label_visibility="collapsed",
+        )
+
+        if uploaded_files:
+            st.write("")
+            st.markdown("**Selected Files:**")
+            for file in uploaded_files:
+                st.markdown(f"📄 {file.name}")
+
+        st.write("")
+        # Centering the Submit button
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            submit_clicked = st.button("Submit", key="submit_upload", type="primary", use_container_width=True)
+
+        if submit_clicked:
+            if not uploaded_files:
+                st.error("Select at least one file before submitting.")
+            else:
+                upload_result = process_uploaded_files(list(uploaded_files))
+                st.session_state["uploaded_files"] = upload_result["files"]
+                st.session_state["upload_notice"] = f"Uploaded {upload_result['file_count']} file(s)."
+                navigate(PAGE_RESPONSE)
+'''
 
 def ensure_active_session() -> dict[str, Any]:
     """Return the active session, creating one only when needed."""
