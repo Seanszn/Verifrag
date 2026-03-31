@@ -49,23 +49,8 @@ if __name__ == "__main__":
 
 import streamlit as st
 
-st.set_page_config(page_title="VerifRAG", layout="wide")
+from src.client.ui import run_client_app
 
-st.title("VerifRAG")
-st.write("Legal RAG with claim verification.")
 
-st.write("Use the sidebar to move between pages.")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    if st.button("Upload Documents"):
-        st.switch_page("pages/1_Upload_Documents.py")
-
-with col2:
-    if st.button("Search"):
-        st.switch_page("pages/2_Search.py")
-
-with col3:
-    if st.button("Verification"):
-        st.switch_page("pages/3_Verification.py")
+if __name__ == "__main__":
+    run_client_app()
