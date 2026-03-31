@@ -36,9 +36,16 @@ class CourtListenerClient:
         self._session: Optional[aiohttp.ClientSession] = None
 
     async def __aenter__(self) -> "CourtListenerClient":
-        headers = {"Accept": "application/json"}
-        if self.token:
-            headers["Authorization"] = f"Token {self.token}"
+        if not self.token:
+            raise ValueError(
+                "CourtListener API token is missing. Check your .env and config."
+            )
+
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Token {self.token}",
+        }
+
         self._session = aiohttp.ClientSession(headers=headers)
         return self
 
@@ -93,28 +100,61 @@ class CourtListenerClient:
     @retry(
         wait=wait_exponential(min=1, max=60),
         stop=stop_after_attempt(5),
-        retry=retry_if_exception_type((aiohttp.ClientError, RateLimitError)),
+        retry=retry_if_exception_type((aiohttp.ClientConnectionError, asyncio.TimeoutError, RateLimitError)),
+        reraise=True,
     )
     async def _request_with_retry(self, url: str, params: Optional[dict]) -> dict:
         if not self._session:
             raise RuntimeError("Client session not initialized. Use 'async with' context manager.")
 
-        async with self._session.get(url, params=params) as resp:
-            if resp.status == 429:
-                retry_after = float(resp.headers.get("Retry-After", "60"))
-                logger.warning("Rate limited. Retry-After: %s seconds", retry_after)
-                await asyncio.sleep(retry_after)
-                raise RateLimitError(retry_after)
-
-            if resp.status >= 500:
+        try:
+            async with self._session.get(url, params=params) as resp:
                 body = await resp.text()
-                logger.warning("Server error %d: %s", resp.status, body[:200])
-                raise aiohttp.ClientResponseError(
-                    resp.request_info,
-                    resp.history,
-                    status=resp.status,
-                    message=f"Server error {resp.status}",
-                )
 
-            resp.raise_for_status()
-            return await resp.json()
+                logger.info("CourtListener request URL: %s", str(resp.url))
+                logger.info("CourtListener status: %s", resp.status)
+
+                if resp.status == 429:
+                    retry_after = float(resp.headers.get("Retry-After", "60"))
+                    logger.warning("Rate limited. Retry-After: %s seconds", retry_after)
+                    await asyncio.sleep(retry_after)
+                    raise RateLimitError(retry_after)
+
+                if resp.status >= 500:
+                    logger.warning("Server error %d: %s", resp.status, body[:500])
+                    raise aiohttp.ClientResponseError(
+                        request_info=resp.request_info,
+                        history=resp.history,
+                        status=resp.status,
+                        message=body[:500],
+                        headers=resp.headers,
+                    )
+
+                if resp.status >= 400:
+                    logger.error("Client error %d for %s", resp.status, resp.url)
+                    logger.error("Response body: %s", body[:1000])
+
+                    # Do NOT retry normal client-side errors like 400/401/403/404
+                    raise RuntimeError(
+                        f"CourtListener API request failed with status {resp.status}\n"
+                        f"URL: {resp.url}\n"
+                        f"Response: {body[:1000]}"
+                    )
+
+                try:
+                    return await resp.json()
+                except Exception as json_error:
+                    logger.error("Failed to parse JSON. Body: %s", body[:1000])
+                    raise RuntimeError(
+                        f"CourtListener returned non-JSON response.\n"
+                        f"URL: {resp.url}\n"
+                        f"Body: {body[:1000]}"
+                    ) from json_error
+
+        except aiohttp.ClientConnectionError as e:
+            logger.warning("Connection error calling CourtListener: %s", e)
+            raise
+        except asyncio.TimeoutError as e:
+            logger.warning("Timeout calling CourtListener: %s", e)
+            raise
+        
