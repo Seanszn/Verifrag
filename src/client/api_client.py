@@ -51,3 +51,27 @@ def clear_auth() -> None:
     st.session_state.pop("auth_token", None)
     st.session_state.pop("user", None)
     st.session_state.pop("selected_conversation_id", None)
+
+def ask_agent(query: str, conversation_id: int | None = None) -> dict[str, Any]:
+    payload = {
+        "query": query,
+        "conversation_id": conversation_id,
+    }
+
+    response = api_request("POST", "/api/agent/ask", json=payload)
+
+    if response.status_code == 401:
+        clear_auth()
+        raise RuntimeError("Your session expired. Please sign in again.")
+
+    response.raise_for_status()
+    return response.json()
+
+def ask_agent(query: str, conversation_id: int | None = None) -> dict[str, Any]:
+    response = api_request(
+        "POST",
+        "/api/agent/ask",
+        json={"query": query, "conversation_id": conversation_id},
+    )
+    response.raise_for_status()
+    return response.json()

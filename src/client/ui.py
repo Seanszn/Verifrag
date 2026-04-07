@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from src.client.api_client import ask_agent
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -574,25 +575,64 @@ def save_active_session(session: dict[str, Any]) -> None:
 
 
 def submit_query() -> None:
-    query = st.session_state["current_query"].strip()
+    query = st.session_state.get("current_query", "").strip()
     if not query:
         st.error("Enter a query before submitting.")
         return
 
     st.session_state["is_generating"] = True
+
     session = ensure_active_session()
     session["messages"].append({"role": "user", "content": query})
-    response = build_placeholder_response(query, st.session_state["uploaded_files"])
-    session["messages"].append({"role": "assistant", "content": response})
     save_active_session(session)
-    st.session_state["current_query"] = ""
-    st.session_state["is_generating"] = False
-    st.rerun()
+
+    try:
+        conversation_id = st.session_state.get("selected_conversation_id")
+
+        result = ask_agent(
+            query=query,
+            conversation_id=conversation_id,
+        )
+
+        assistant_text = result.get("answer", "No response returned from API.")
+        new_conversation_id = result.get("conversation_id")
+
+        if new_conversation_id is not None:
+            st.session_state["selected_conversation_id"] = new_conversation_id
+
+        session = ensure_active_session()
+        session["messages"].append(
+            {
+                "role": "assistant",
+                "content": assistant_text,
+            }
+        )
+        save_active_session(session)
+
+        st.session_state["clear_query_next_run"] = True
+
+    except Exception as exc:
+        session = ensure_active_session()
+        session["messages"].append(
+            {
+                "role": "assistant",
+                "content": f"Error calling API: {exc}",
+            }
+        )
+        save_active_session(session)
+
+    finally:
+        st.session_state["is_generating"] = False
+        st.rerun()
 
 
 def render_response_page() -> None:
     require_auth()
     render_header("Home", lambda: navigate(PAGE_HOME))
+
+    if st.session_state.get("clear_query_next_run"):
+        st.session_state["current_query"] = ""
+        st.session_state["clear_query_next_run"] = False
 
     if st.session_state.get("upload_notice"):
         st.success(st.session_state["upload_notice"])
@@ -638,6 +678,17 @@ def run_client_app() -> None:
     st.set_page_config(page_title="VerifRAG", layout="wide")
     initialize_state()
     apply_styles()
+
+    st.markdown("""
+   <style>
+    textarea {
+        background-color: #0f172a !important;
+        color: white !important;
+        border-radius: 10px !important;
+        padding: 12px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     page = st.session_state["page"]
 
