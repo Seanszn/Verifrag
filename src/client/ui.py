@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+import os
 from pathlib import Path
 from typing import Any
-import bcrypt
 import base64
+from src.auth.local_auth import hash_password, verify_password
 from src.storage.database import Database
 
 import streamlit as st
@@ -21,9 +22,9 @@ TEMP_UPLOAD_DIR = Path(__file__).resolve().parents[2] / "temp_uploads"
 
 
 @st.cache_resource
-def get_db() -> Database:
+def get_db(db_path: str | None = None) -> Database:
     """Initialize and cache the database connection."""
-    db = Database()
+    db = Database(Path(db_path) if db_path else None)
     db.initialize()
     return db
 
@@ -40,6 +41,7 @@ def initialize_state() -> None:
         "is_generating": False,
         "user": None,
         "show_register_notice": False,
+        "registration_success_message": None,
         "show_upload_hint": False,
         "upload_notice": None,
     }
@@ -302,6 +304,7 @@ def logout() -> None:
     st.session_state["is_generating"] = False
     st.session_state["user"] = None
     st.session_state["show_register_notice"] = False
+    st.session_state["registration_success_message"] = None
     st.session_state["show_upload_hint"] = False
     st.session_state["upload_notice"] = None
     st.rerun()
@@ -449,10 +452,14 @@ def render_login_page() -> None:
     render_header(mode_label, toggle_mode)
 
     is_registering = st.session_state.get("show_register_notice", False)
-    db = get_db()
+    db = get_db(os.getenv("DATABASE_PATH"))
 
     _, form_col, _ = st.columns([1.2, 1.6, 1.2])
     with form_col:
+        if st.session_state.get("registration_success_message"):
+            st.success(st.session_state["registration_success_message"])
+            st.session_state["registration_success_message"] = None
+
         title_text = "Create an " if is_registering else "Sign into your "
         st.markdown(
             f'<div class="vr-page-title"><span class="vr-page-title-muted">{title_text}</span>account</div>',
@@ -483,14 +490,12 @@ def render_login_page() -> None:
                     st.error("Username already exists. Please choose another.")
                     return
                 
-                # Hash the password and save to DB
-                salt = bcrypt.gensalt()
-                hashed_pw = bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
-                
                 try:
-                    db.create_user(username_val, hashed_pw)
-                    st.success("Registration successful! Switching to login...")
+                    db.create_user(username_val, hash_password(password))
                     st.session_state["show_register_notice"] = False
+                    st.session_state["registration_success_message"] = (
+                        "Registration successful! Switching to login..."
+                    )
                     st.rerun()
                 except Exception as e:
                     st.error(f"Database error: {str(e)}")
@@ -502,7 +507,7 @@ def render_login_page() -> None:
                 if user_row:
                     # Verify the hash
                     stored_hash = user_row["password_hash"]
-                    if bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8')):
+                    if verify_password(password, stored_hash):
                         st.session_state["authenticated"] = True
                         
                         # Store the database User ID in session state for later use

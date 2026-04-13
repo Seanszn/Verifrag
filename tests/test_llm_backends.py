@@ -1,6 +1,7 @@
 import pytest
 from src.generation.ollama_backend import OllamaBackend
-import ollama
+
+ollama = pytest.importorskip("ollama")
 
 # Change this to whatever small model you have pulled locally (e.g., "llama3", "mistral", "phi3")
 TEST_MODEL = "llama3"

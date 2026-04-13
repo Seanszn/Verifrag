@@ -1,9 +1,13 @@
 """Tests for local embedding wrapper."""
 
 import numpy as np
+import pytest
 
 from src.config import MODELS
 from src.indexing.embedder import Embedder
+
+
+pytestmark = pytest.mark.smoke
 
 
 class _FakeModel:

@@ -8,6 +8,9 @@ from src.ingestion.document import LegalChunk
 from src.verification.nli_verifier import NLIVerifier
 
 
+pytestmark = pytest.mark.smoke
+
+
 @dataclass(frozen=True)
 class _Claim:
     text: str

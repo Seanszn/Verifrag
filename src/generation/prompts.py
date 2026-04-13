@@ -49,6 +49,9 @@ Requirements:
   makes that possible.
 - If authorities conflict or are incomplete, say so explicitly.
 - Keep the answer structured so downstream claim verification can evaluate it.
+- Use plain text only: no Markdown headings, bullets, bold text, tables, or
+  bracketed context citations in the answer.
+- Write each substantive point as a complete declarative sentence.
 """
 
 
@@ -59,14 +62,13 @@ Retrieved context:
 {context}
 
 Answering instructions:
-- Start with a short answer.
-- Then provide analysis based only on the retrieved context.
-- Cite the relevant context item numbers in square brackets, for example [1]
-  or [2], whenever making a substantive legal or factual assertion.
+- Start with one direct plain-text answer sentence.
+- Then provide analysis based only on the retrieved context, using complete
+  plain-text sentences.
 - If the context is insufficient, say "Insufficient support in retrieved
   authorities" and explain what is missing.
-- End with a short "Limits" section identifying uncertainty, conflicting
-  authority, or missing facts.
+- Do not use Markdown headings such as "Short Answer", "Analysis", or "Limits".
+- Do not use bullets, numbered lists, bold text, or square-bracket citations.
 """
 
 

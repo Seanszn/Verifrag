@@ -1,0 +1,21 @@
+{
+  "document": {
+    "id": "demo_motion",
+    "source_file": "demo_motion.txt",
+    "court_level": "scotus",
+    "full_text": "Officer Smith entered the residence and arrested Doe after reading the warrant aloud. The court denied the motion to suppress because the entry was lawful. Additional procedural history appears in the record, including briefing, argument, and a later status conference."
+  },
+  "chunking": {
+    "chunk_size": 15,
+    "chunk_overlap": 3
+  },
+  "assistant_response": {
+    "id": "assistant_response",
+    "full_text": "Officer Smith entered the residence and arrested Doe. The motion to suppress was granted."
+  },
+  "claims_to_verify": [
+    "Officer Smith entered the residence.",
+    "Officer Smith arrested Doe.",
+    "The motion to suppress was granted."
+  ]
+}

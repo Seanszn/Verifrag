@@ -21,6 +21,20 @@ from typing import Any, Mapping, Optional
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _SENTENCE_RE = re.compile(r"[^.!?]+[.!?]?")
+_PROTECTED_PERIOD = "\x00"
+_LEGAL_ABBREVIATION_RE = re.compile(
+    r"\b(?:U\.\s*S\.\s*C|U\.\s*S|S\.\s*Ct|F\.\s*(?:3d|2d|Supp)|"
+    r"No|Nos|App|Id|e\.g|i\.e|v)\.",
+    re.IGNORECASE,
+)
+_CLAIM_CITATION_PREFIX_RE = re.compile(r"^(?:\[\d+\]\s*)+")
+_CLAIM_MARKDOWN_HEADING_RE = re.compile(
+    r"^\*{0,2}(?:short answer|analysis|limits)\s*:?\*{0,2}\s*:?\s*",
+    re.IGNORECASE,
+)
+_CLAIM_BULLET_PREFIX_RE = re.compile(r"^(?:[-*]\s+)+")
+_CLAIM_CONTEXT_CITATION_RE = re.compile(r"\s*\[\d+(?:\s*[-,]\s*\d+)*\]")
+_CLAIM_MARKDOWN_EMPHASIS_RE = re.compile(r"\*{1,2}([^*]+?)\*{1,2}")
 _HEDGE_RE = re.compile(
     r"\b(may|might|could|possibly|likely|arguably|appears|suggests)\b",
     re.IGNORECASE,
@@ -38,12 +52,42 @@ _ATTRIBUTION_RE = re.compile(
     r"\s+that\s+(?P<content>.+)$",
     re.IGNORECASE,
 )
-_CONJOINED_VERBS_RE = re.compile(
-    r"^(?P<subject>[A-Z][\w .,'-]{1,120}?)\s+"
-    r"(?P<verb1>\w+)\s+(?P<object1>.+?)\s+and\s+"
-    r"(?P<verb2>\w+)\s+(?P<object2>.+)$",
-    re.IGNORECASE,
-)
+_AND_SPLIT_RE = re.compile(r"\s+and\s+", re.IGNORECASE)
+_COMMON_VERB_LEMMAS = {
+    "accept",
+    "affirm",
+    "allege",
+    "appeal",
+    "argue",
+    "arrest",
+    "assert",
+    "award",
+    "claim",
+    "conclude",
+    "contend",
+    "deny",
+    "determine",
+    "dismiss",
+    "enter",
+    "file",
+    "find",
+    "grant",
+    "hold",
+    "leave",
+    "order",
+    "receive",
+    "remand",
+    "request",
+    "return",
+    "reverse",
+    "rule",
+    "say",
+    "seek",
+    "state",
+    "submit",
+    "testify",
+    "vacate",
+}
 
 
 @dataclass(frozen=True)
@@ -147,7 +191,12 @@ def split_sentences(text: str) -> list[str]:
     normalized = normalize_text(text)
     if not normalized:
         return []
-    return [m.group(0).strip() for m in _SENTENCE_RE.finditer(normalized) if m.group(0).strip()]
+    protected = _protect_sentence_abbreviations(normalized)
+    return [
+        _restore_sentence_abbreviations(m.group(0).strip())
+        for m in _SENTENCE_RE.finditer(protected)
+        if m.group(0).strip()
+    ]
 
 
 def split_clauses(sentence: str) -> list[str]:
@@ -169,19 +218,58 @@ def split_clauses(sentence: str) -> list[str]:
 
 def _split_conjoined_predicates(clause: str) -> list[str]:
     trimmed = clause.strip().rstrip(".")
-    match = _CONJOINED_VERBS_RE.match(trimmed)
-    if not match:
+    parts = _AND_SPLIT_RE.split(trimmed, maxsplit=1)
+    if len(parts) != 2:
         return [_ensure_terminal_period(clause)]
 
-    verb1 = match.group("verb1").lower()
-    verb2 = match.group("verb2").lower()
-    if len(verb1) < 3 or len(verb2) < 3:
+    first_part, second_part = (part.strip() for part in parts)
+    if not first_part or not second_part:
         return [_ensure_terminal_period(clause)]
 
-    subject = match.group("subject").strip()
-    first = f"{subject} {match.group('verb1').strip()} {match.group('object1').strip()}"
-    second = f"{subject} {match.group('verb2').strip()} {match.group('object2').strip()}"
+    subject_predicate = _split_subject_predicate(first_part)
+    if subject_predicate is None or not _starts_with_verb(second_part):
+        return [_ensure_terminal_period(clause)]
+
+    subject, predicate = subject_predicate
+    first = f"{subject} {predicate}"
+    second = f"{subject} {second_part}"
     return [_ensure_terminal_period(first), _ensure_terminal_period(second)]
+
+
+def _split_subject_predicate(text: str) -> Optional[tuple[str, str]]:
+    tokens = text.split()
+    if len(tokens) < 3:
+        return None
+
+    for index in range(len(tokens) - 2, 0, -1):
+        if _looks_like_verb(tokens[index]):
+            subject = " ".join(tokens[:index]).strip()
+            predicate = " ".join(tokens[index:]).strip()
+            if subject and predicate:
+                return subject, predicate
+    return None
+
+
+def _starts_with_verb(text: str) -> bool:
+    tokens = text.split()
+    if not tokens:
+        return False
+    return _looks_like_verb(tokens[0])
+
+
+def _looks_like_verb(token: str) -> bool:
+    cleaned = re.sub(r"^[^\w]+|[^\w]+$", "", token).lower()
+    if len(cleaned) < 2:
+        return False
+    if cleaned in _COMMON_VERB_LEMMAS:
+        return True
+    if cleaned.endswith("ed") or cleaned.endswith("ing"):
+        return len(cleaned) > 3
+    if cleaned.endswith("es") and cleaned[:-2] in _COMMON_VERB_LEMMAS:
+        return True
+    if cleaned.endswith("s") and cleaned[:-1] in _COMMON_VERB_LEMMAS:
+        return True
+    return False
 
 
 def detect_attribution(clause: str) -> Optional[dict[str, str]]:
@@ -213,7 +301,7 @@ def make_claims_from_clause(
     """
     Build one or more claims from a clause.
     """
-    clause_text = _ensure_terminal_period(clause.strip())
+    clause_text = _ensure_terminal_period(_clean_claim_text(clause))
     if not clause_text or clause_text == ".":
         return []
 
@@ -284,8 +372,9 @@ def decompose_document(document: Mapping[str, Any] | str) -> list[Claim]:
     claims: list[Claim] = []
 
     sentence_index = 0
-    for sent_match in _SENTENCE_RE.finditer(text):
-        sentence = sent_match.group(0).strip()
+    protected_text = _protect_sentence_abbreviations(text)
+    for sent_match in _SENTENCE_RE.finditer(protected_text):
+        sentence = _restore_sentence_abbreviations(sent_match.group(0).strip())
         if not sentence:
             continue
         sentence_index += 1
@@ -331,6 +420,30 @@ def _classify_claim_type(text: str) -> str:
     if _HOLDING_RE.search(text):
         return "holding"
     return "fact"
+
+
+def _protect_sentence_abbreviations(text: str) -> str:
+    return _LEGAL_ABBREVIATION_RE.sub(
+        lambda match: match.group(0).replace(".", _PROTECTED_PERIOD),
+        text,
+    )
+
+
+def _restore_sentence_abbreviations(text: str) -> str:
+    return text.replace(_PROTECTED_PERIOD, ".")
+
+
+def _clean_claim_text(text: str) -> str:
+    cleaned = text.strip()
+    previous = None
+    while cleaned and cleaned != previous:
+        previous = cleaned
+        cleaned = _CLAIM_CITATION_PREFIX_RE.sub("", cleaned).strip()
+        cleaned = _CLAIM_MARKDOWN_HEADING_RE.sub("", cleaned).strip()
+        cleaned = _CLAIM_BULLET_PREFIX_RE.sub("", cleaned).strip()
+        cleaned = _CLAIM_CONTEXT_CITATION_RE.sub("", cleaned).strip()
+        cleaned = _CLAIM_MARKDOWN_EMPHASIS_RE.sub(r"\1", cleaned).strip()
+    return cleaned
 
 
 def _classify_certainty(text: str) -> str:
