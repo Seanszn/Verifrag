@@ -1,10 +1,15 @@
 """Tests for claim decomposition."""
 
+import pytest
+
 from src.verification.claim_decomposer import (
     decompose_document,
     load_document,
     split_clauses,
 )
+
+
+pytestmark = pytest.mark.smoke
 
 
 def test_golden_case_conjoined_verbs_become_atomic_claims():
@@ -33,6 +38,46 @@ def test_split_clauses_conjoined_verbs():
         "The officer entered the residence.",
         "The officer arrested Doe.",
     ]
+
+
+def test_split_clauses_conjoined_verbs_with_multiword_subject():
+    clauses = split_clauses("The United States entered the agreement and accepted the terms.")
+    assert clauses == [
+        "The United States entered the agreement.",
+        "The United States accepted the terms.",
+    ]
+
+
+def test_decompose_document_preserves_common_legal_abbreviations():
+    text = (
+        "Klein v. Martin says 28 U.S.C. 2254(d) governs habeas review. "
+        "Harrington v. Richter frames AEDPA review as guarding against extreme malfunctions."
+    )
+
+    claims = decompose_document(text)
+    claim_texts = [claim.text for claim in claims]
+
+    assert "Klein v. Martin says 28 U.S.C. 2254(d) governs habeas review." in claim_texts
+    assert "Harrington v. Richter frames AEDPA review as guarding against extreme malfunctions." in claim_texts
+    assert "S." not in claim_texts
+    assert "C." not in claim_texts
+
+
+def test_decompose_document_omits_markdown_and_context_prefixes_from_claims():
+    text = (
+        "**Short Answer** Under AEDPA, habeas review is limited. [2]\n\n"
+        "**Analysis:**\n\n[2] The court must defer to reasonable state-court decisions.\n\n"
+        "**Limits:**\n\n* The context does not address every Brady scenario."
+    )
+
+    claims = decompose_document(text)
+    claim_texts = [claim.text for claim in claims]
+
+    assert "Under AEDPA, habeas review is limited." in claim_texts
+    assert "The court must defer to reasonable state-court decisions." in claim_texts
+    assert "The context does not address every Brady scenario." in claim_texts
+    assert all(not text.startswith(("[2]", "*", "**")) for text in claim_texts)
+    assert all("[2]" not in text for text in claim_texts)
 
 
 def test_corpus_builder_record_format_is_accepted():

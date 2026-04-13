@@ -52,7 +52,7 @@ class LLMConfig:
     provider: LLMProvider = field(
         default_factory=lambda: LLMProvider(os.getenv("LLM_PROVIDER", "ollama"))
     )
-    model: str = os.getenv("LLM_MODEL", "llama3.1:8b")
+    model: str = os.getenv("LLM_MODEL", "deepseek-r1:8b")
     host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     temperature: float = 0.1
     max_tokens: int = 2048
@@ -93,7 +93,7 @@ class VectorStoreConfig:
 class ModelConfig:
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_dim: int = 384
-    nli_model: str = "microsoft/deberta-v3-base-mnli-fever-anli"
+    nli_model: str = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
     nli_labels: List[str] = field(default_factory=lambda: ["contradiction", "neutral", "entailment"])
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
@@ -129,8 +129,9 @@ class VerificationConfig:
         "state_trial": 0.35,
         "unknown": 0.40,
     })
-    threshold_verified: float = 0.92
-    threshold_supported: float = 0.82
+    threshold_verified: float = 0.70
+    threshold_supported: float = 0.55
+    threshold_possible_support: float = 0.40
     threshold_weak: float = 0.50
     threshold_contradicted: float = 0.60
     fuzzy_match_threshold: float = 85.0
@@ -165,7 +166,7 @@ class DataConfig:
 # ============== COST TRACKING ==============
 
 LLM_PRICING = {
-    "llama3.1:8b": {"input": 0.0, "output": 0.0},
+    "deepseek-r1:8b": {"input": 0.0, "output": 0.0},
 }
 
 # ============== INSTANCES ==============

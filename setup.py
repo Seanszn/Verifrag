@@ -29,6 +29,10 @@ setup(
         "python-dotenv>=1.0.0",
         "aiohttp>=3.9.0",
         "tenacity>=8.0.0",
+        "fastapi>=0.115.0",
+        "uvicorn>=0.30.0",
+        "pydantic>=2.7.0",
+        "python-multipart>=0.0.18",
         "streamlit>=1.30.0",
     ],
     extras_require={

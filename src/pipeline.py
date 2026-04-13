@@ -6,15 +6,16 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
-from src.config import INDEX_DIR, VECTOR_STORE
 from src.generation.ollama_backend import OllamaBackend
 from src.indexing.bm25_index import BM25Index
 from src.indexing.chroma_store import ChromaStore
 from src.indexing.embedder import Embedder
+from src.indexing.index_discovery import discover_index_artifacts
 from src.retrieval.hybrid_retriever import HybridRetriever
 from src.storage.database import Database
 from src.verification.claim_decomposer import decompose_document
 from src.verification.nli_verifier import AggregatedScore, NLIVerifier
+from src.verification.verdict import classify_verification
 
 
 class QueryPipeline:
@@ -74,8 +75,27 @@ class QueryPipeline:
         return self.db.create_conversation(user_id, _default_title(query))
 
     def _generate_response(self, query: str) -> tuple[str, dict[str, Any]]:
+        retrieved_chunks = []
+        retrieval_status = self.retriever_status
+        retrieval_error = False
+
+        if self.retriever is not None:
+            try:
+                retrieved_chunks = self.retriever.retrieve(query)
+            except Exception as exc:  # pragma: no cover - defensive path for live index/runtime failures
+                retrieval_status = f"error:{exc.__class__.__name__}"
+                retrieval_error = True
+
         try:
-            response = self.llm.generate_legal_answer(query)
+            if retrieved_chunks:
+                response = self.llm.generate_with_context(
+                    query,
+                    [_format_chunk_for_prompt(chunk) for chunk in retrieved_chunks],
+                )
+                generation_mode = "rag"
+            else:
+                response = self.llm.generate_legal_answer(query)
+                generation_mode = "direct"
             backend_status = "ok"
         except Exception as exc:  # pragma: no cover - defensive path for live Ollama failures
             response = (
@@ -83,16 +103,18 @@ class QueryPipeline:
                 "Check Ollama availability and server configuration."
             )
             backend_status = f"error:{exc.__class__.__name__}"
+            generation_mode = "rag" if retrieved_chunks else "direct"
 
         raw_claims = decompose_document({"id": "assistant_response", "full_text": response})
         claims = [claim.to_dict() for claim in raw_claims]
         meta = {
             "llm_provider": "ollama",
             "llm_backend_status": backend_status,
-            "retrieval_used": False,
-            "retrieval_backend_status": self.retriever_status,
-            "retrieval_chunk_count": 0,
-            "retrieved_chunks": [],
+            "generation_mode": generation_mode,
+            "retrieval_used": bool(retrieved_chunks),
+            "retrieval_backend_status": retrieval_status,
+            "retrieval_chunk_count": len(retrieved_chunks),
+            "retrieved_chunks": [_serialize_chunk(chunk) for chunk in retrieved_chunks],
             "claim_count": len(claims),
             "claims": claims,
             "verification_backend_status": "skipped:no_retriever",
@@ -105,27 +127,23 @@ class QueryPipeline:
         if self.retriever is None:
             return response, meta
 
-        try:
-            retrieved_chunks = self.retriever.retrieve(query)
-        except Exception as exc:  # pragma: no cover - defensive path for live index/runtime failures
-            meta["retrieval_backend_status"] = f"error:{exc.__class__.__name__}"
+        if retrieval_error:
             meta["verification_backend_status"] = "skipped:retrieval_error"
             return response, meta
-
-        meta["retrieval_chunk_count"] = len(retrieved_chunks)
-        meta["retrieved_chunks"] = [_serialize_chunk(chunk) for chunk in retrieved_chunks]
 
         if not retrieved_chunks:
             meta["verification_backend_status"] = "skipped:no_evidence"
             return response, meta
-
-        meta["retrieval_used"] = True
 
         verifier = self.verifier or NLIVerifier()
         try:
             verdicts = verifier.verify_claims_batch(raw_claims, retrieved_chunks)
         except Exception as exc:  # pragma: no cover - defensive path for live model/runtime failures
             meta["verification_backend_status"] = f"error:{exc.__class__.__name__}"
+            meta["verification_error"] = {
+                "type": exc.__class__.__name__,
+                "message": str(exc),
+            }
             return response, meta
 
         meta["claims"] = [
@@ -146,8 +164,12 @@ def _default_title(query: str) -> str:
 
 
 def _load_default_retriever() -> tuple[HybridRetriever | None, str]:
-    bm25_index = _load_bm25_index(INDEX_DIR / "bm25.pkl")
-    vector_store, embedder = _load_vector_store(VECTOR_STORE.chroma_path)
+    artifacts = discover_index_artifacts()
+    bm25_index = _load_bm25_index(artifacts.bm25_path)
+    vector_store, embedder = _load_vector_store(
+        artifacts.chroma_path,
+        collection_name=artifacts.collection_name,
+    )
 
     if bm25_index is None and vector_store is None:
         return None, "unavailable:no_indices"
@@ -173,7 +195,11 @@ def _load_bm25_index(index_path: Path) -> BM25Index | None:
     return bm25_index
 
 
-def _load_vector_store(chroma_path: Path) -> tuple[ChromaStore | None, Embedder | None]:
+def _load_vector_store(
+    chroma_path: Path,
+    *,
+    collection_name: str | None = None,
+) -> tuple[ChromaStore | None, Embedder | None]:
     if not chroma_path.exists():
         return None, None
 
@@ -185,7 +211,7 @@ def _load_vector_store(chroma_path: Path) -> tuple[ChromaStore | None, Embedder 
     if not has_entries:
         return None, None
 
-    vector_store = ChromaStore(path=chroma_path)
+    vector_store = ChromaStore(path=chroma_path, collection_name=collection_name)
     return vector_store, Embedder()
 
 
@@ -195,10 +221,39 @@ def _serialize_chunk(chunk) -> dict[str, Any]:
     return payload
 
 
+def _format_chunk_for_prompt(chunk) -> str:
+    metadata = [
+        f"Chunk ID: {chunk.id}",
+        f"Document ID: {chunk.doc_id}",
+        f"Document type: {chunk.doc_type}",
+    ]
+    if chunk.case_name:
+        metadata.append(f"Case name: {chunk.case_name}")
+    if chunk.court:
+        metadata.append(f"Court: {chunk.court}")
+    if chunk.court_level:
+        metadata.append(f"Court level: {chunk.court_level}")
+    if chunk.citation:
+        metadata.append(f"Citation: {chunk.citation}")
+    if chunk.date_decided:
+        metadata.append(f"Date decided: {chunk.date_decided.isoformat()}")
+    if chunk.title is not None:
+        metadata.append(f"Title: {chunk.title}")
+    if chunk.section:
+        metadata.append(f"Section: {chunk.section}")
+    if chunk.source_file:
+        metadata.append(f"Source file: {chunk.source_file}")
+
+    return f"{'; '.join(metadata)}\n{chunk.text}"
+
+
 def _serialize_claim_with_verification(claim, verdict: AggregatedScore) -> dict[str, Any]:
     payload = claim.to_dict()
+    classification = classify_verification(verdict)
     payload["verification"] = {
         "final_score": verdict.final_score,
+        "verdict": classification.label,
+        "verdict_explanation": classification.explanation,
         "is_contradicted": verdict.is_contradicted,
         "best_chunk_idx": verdict.best_chunk_idx,
         "support_ratio": verdict.support_ratio,

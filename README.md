@@ -31,14 +31,16 @@ Run from the `legalverifirag/` directory.
 
 ```powershell
 .\scripts\setup_local.ps1
+.\scripts\run_api.ps1
 .\scripts\run_local.ps1
 ```
 
 ### Linux (Bash)
 
 ```bash
-chmod +x scripts/setup_local.sh scripts/run_local.sh
+chmod +x scripts/setup_local.sh scripts/run_api.sh scripts/run_local.sh
 ./scripts/setup_local.sh
+./scripts/run_api.sh
 ./scripts/run_local.sh
 ```
 
@@ -75,7 +77,12 @@ ollama pull llama3.1:8b
 
 ## Configuration
 
-`.env.example` is local-only by default.
+`.env.example` includes local API and UI defaults.
+
+## Engineering Notes
+
+- Coding standards: `CODING_STANDARDS.md`
+- Cleanup priorities: `CLEANUP_PLAN.md`
 
 ## Usage (Current Repository)
 
@@ -83,14 +90,18 @@ ollama pull llama3.1:8b
 # Download a small SCOTUS test batch (recommended first)
 python scripts/download_corpus.py --scotus --limit 10
 
+# Add local files to the corpus (PDF, DOCX, TXT, Markdown)
+python scripts/ingest_user_files.py path/to/file.pdf path/to/notes.md --rebuild-index
+
 # Full corpus sync examples
 python scripts/download_corpus.py --all
 python scripts/download_corpus.py --update
 
-# Build indices (script exists but is currently a placeholder)
+# Build ChromaDB and BM25 indices
 python scripts/build_index.py
 
-# Run app (file exists but is currently a placeholder)
+# Run backend and Streamlit client in separate terminals
+python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
 streamlit run src/app.py
 ```
 
@@ -141,15 +152,33 @@ Cron example (weekly Monday at 2:00 AM):
 0 2 * * 1 cd /path/to/legalverifirag && ./scripts/weekly_corpus_update.sh
 ```
 
-Note: This updates the corpus JSONL files. Rebuilding search indices after updates will require `scripts/build_index.py`, which is currently a placeholder in this repository.
+Note: This updates the corpus JSONL files. Rebuild search indices after updates with `scripts/build_index.py`.
+
+## Add Your Own Files
+
+Use `scripts/ingest_user_files.py` to parse local PDFs, DOCX files, plain text, or Markdown into the same raw/processed JSONL corpus format used by the rest of the system.
+
+```bash
+python scripts/ingest_user_files.py ./my-brief.pdf ./draft-order.docx
+python scripts/ingest_user_files.py ./uploads --recursive --rebuild-index
+```
+
+By default this writes:
+
+- `data/raw/user_uploads.jsonl`
+- `data/processed/user_upload_chunks.jsonl`
+
+Pass `--rebuild-index` if you want the newly ingested files to be searchable immediately.
 
 ## Current Repository Status
 
 This repository contains a mix of implemented modules and scaffolding:
 
 - `scripts/download_corpus.py` is implemented and usable
-- `scripts/build_index.py` is currently a placeholder
-- `src/app.py` and `src/pipeline.py` are currently placeholders
+- `scripts/build_index.py` builds local ChromaDB and BM25 indices from JSONL inputs
+- `src/api/main.py` provides FastAPI auth, conversation, and query endpoints
+- `src/app.py` is a thin Streamlit client for the backend API
+- `src/pipeline.py` runs server-side query orchestration and persists history
 
 The setup and run scripts are still useful for provisioning a new machine and standardizing local configuration.
 
@@ -158,13 +187,17 @@ The setup and run scripts are still useful for provisioning a new machine and st
 ```text
 legalverifirag/
 |-- src/
+|   |-- api/            # FastAPI backend
+|   |-- auth/           # Password hashing
+|   |-- client/         # Streamlit client helpers and UI
+|   |-- storage/        # SQLite persistence
 |   |-- ingestion/      # Document downloading and processing
 |   |-- indexing/       # Vector stores and search indices
 |   |-- retrieval/      # Hybrid search
 |   |-- generation/     # LLM backends and prompts
 |   |-- verification/   # Claim verification algorithms
-|   |-- pipeline.py     # End-to-end orchestration
-|   `-- app.py          # Streamlit UI
+|   |-- pipeline.py     # Server-side orchestration
+|   `-- app.py          # Streamlit client UI
 |-- data/
 |   |-- raw/            # Downloaded cases and statutes
 |   |-- processed/      # Chunked documents
