@@ -8,6 +8,7 @@ from typing import Any
 import bcrypt
 import base64
 from src.storage.database import Database
+from src.ingestion.document_pipeline import DocumentPipeline
 
 import streamlit as st
 import os
@@ -30,6 +31,10 @@ def get_db() -> Database:
     db = Database()
     db.initialize()
     return db
+
+@st.cache_resource
+def get_pipeline() -> DocumentPipeline:
+    return DocumentPipeline()
 
 def initialize_state() -> None:
     """Initialize the session keys used by the prototype pages."""
@@ -364,28 +369,33 @@ def build_placeholder_response(query: str, uploaded_files: list[dict[str, Any]])
 
 
 def process_uploaded_files(files: list[Any]) -> dict[str, Any]:
-    """Persist uploaded files to a local temp directory and return metadata."""
+    pipeline = get_pipeline()
 
-    TEMP_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     saved_files: list[dict[str, Any]] = []
+    all_chunks = []
 
     for uploaded in files:
         filename = Path(uploaded.name).name
-        destination = TEMP_UPLOAD_DIR / filename
-        destination.write_bytes(bytes(uploaded.getbuffer()))
+
+        result_chunks = pipeline.process_upload(
+            file=uploaded,
+            filename=filename
+        )
+
+        all_chunks.extend(result_chunks)
+
         saved_files.append(
             {
                 "name": filename,
                 "size": int(uploaded.size),
-                "path": str(destination),
             }
         )
 
     return {
         "success": bool(saved_files),
         "file_count": len(saved_files),
-        "filenames": [item["name"] for item in saved_files],
         "files": saved_files,
+        "chunks": all_chunks,  
     }
 
 
