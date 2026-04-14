@@ -10,7 +10,11 @@ import base64
 from src.storage.database import Database
 
 import streamlit as st
+import os
+import requests
+from dotenv import load_dotenv
 
+load_dotenv()
 
 PAGE_LOGIN = "login"
 PAGE_HOME = "home"
@@ -770,8 +774,12 @@ def save_active_session(session: dict[str, Any]) -> None:
     sessions[active_index] = session
 
 
+def run_legal_query(query: str) -> str:
+    return f"Real pipeline not wired yet: {query}"
+
+
 def submit_query() -> None:
-    """Append the user query and placeholder assistant response."""
+    """Append the user query and call the real query pipeline."""
 
     query = st.session_state["current_query"].strip()
     if not query:
@@ -781,12 +789,16 @@ def submit_query() -> None:
     st.session_state["is_generating"] = True
     session = ensure_active_session()
     session["messages"].append({"role": "user", "content": query})
-    response = build_placeholder_response(query, st.session_state["uploaded_files"])
+
+    try:
+        response = run_legal_query(query)
+    except Exception as e:
+        response = f"Error: {e}"
+
     session["messages"].append({"role": "assistant", "content": response})
     save_active_session(session)
     st.session_state["current_query"] = ""
     st.session_state["is_generating"] = False
-    st.rerun()
 
 
 def render_response_page() -> None:
@@ -830,8 +842,13 @@ def render_response_page() -> None:
                 st.session_state["is_generating"] = False
                 st.info("No active generation to stop in this prototype yet.")
         with send_col:
-            if st.button("Submit", key="submit_query", type="primary", use_container_width=True):
-                submit_query()
+            st.button(
+                "Submit",
+                key="submit_query",
+                type="primary",
+                use_container_width=True,
+                on_click=submit_query,
+            )
 
 
 def run_client_app() -> None:
@@ -853,3 +870,80 @@ def run_client_app() -> None:
         render_response_page()
     else:
         navigate(PAGE_LOGIN)
+
+def run_legal_query(query: str) -> str:
+    courtlistener_token = (
+        os.getenv("COURTLISTENER_API_KEY")
+        or os.getenv("COURTLISTENER_KEY")
+    )
+    ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    ollama_model = os.getenv("LLM_MODEL", "llama3.1:8b")
+
+    if not courtlistener_token:
+        return "Missing CourtListener token in .env"
+
+    # Step 1: Search CourtListener
+    cl_url = "https://www.courtlistener.com/api/rest/v4/search/"
+    cl_headers = {
+        "Authorization": f"Token {courtlistener_token}",
+        "Accept": "application/json",
+    }
+    cl_params = {
+        "q": query,
+        "page_size": 3,
+    }
+
+    cl_response = requests.get(cl_url, headers=cl_headers, params=cl_params, timeout=30)
+    cl_response.raise_for_status()
+    cl_data = cl_response.json()
+    cl_results = cl_data.get("results", [])
+
+    if not cl_results:
+        return "No CourtListener results found for that query."
+
+    # Step 2: Build context from CourtListener results
+    context_chunks = []
+    for i, item in enumerate(cl_results[:3], start=1):
+        case_name = item.get("caseName") or item.get("case_name") or "Unknown case"
+        citation = item.get("citation") or item.get("cite") or "No citation"
+        snippet = item.get("snippet") or "No snippet available."
+        absolute_url = item.get("absolute_url") or ""
+
+        context_chunks.append(
+            f"Result {i}:\n"
+            f"Case: {case_name}\n"
+            f"Citation: {citation}\n"
+            f"Snippet: {snippet}\n"
+            f"Link: {absolute_url}\n"
+        )
+
+    context_text = "\n\n".join(context_chunks)
+
+    # Step 3: Prompt Ollama with the retrieved legal context
+    prompt = f"""
+You are a legal research assistant.
+
+Answer the user's question using only the CourtListener search results below.
+If the results are not sufficient, say that clearly.
+Cite the case names you relied on in your answer.
+
+User question:
+{query}
+
+CourtListener results:
+{context_text}
+""".strip()
+
+    ollama_response = requests.post(
+        f"{ollama_host.rstrip('/')}/api/generate",
+        json={
+            "model": ollama_model,
+            "prompt": prompt,
+            "stream": False,
+        },
+        timeout=60,
+    )
+    ollama_response.raise_for_status()
+    ollama_data = ollama_response.json()
+
+    return ollama_data.get("response", "Ollama returned no response.")
