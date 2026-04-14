@@ -215,9 +215,29 @@ class NLIVerifier:
         self._torch = torch
         self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         self._model = AutoModelForSequenceClassification.from_pretrained(self.model_name)
+        self._update_label_map_from_model_config()
         self._model.to(self.device)
         self._model.eval()
         return self._tokenizer, self._model, self._torch
+
+    def _update_label_map_from_model_config(self) -> None:
+        """Use the model's label metadata when it provides recognizable NLI labels."""
+        if self._model is None:
+            return
+
+        id_to_label = getattr(self._model.config, "id2label", {}) or {}
+        resolved: dict[str, int] = {}
+        for raw_idx, raw_label in id_to_label.items():
+            label = str(raw_label).lower()
+            if "contrad" in label:
+                resolved["contradiction"] = int(raw_idx)
+            elif "neutral" in label:
+                resolved["neutral"] = int(raw_idx)
+            elif "entail" in label:
+                resolved["entailment"] = int(raw_idx)
+
+        if {"contradiction", "neutral", "entailment"}.issubset(resolved):
+            self.label_map = resolved
 
     def _aggregate_scores(self, nli_scores: Sequence[NLIScore]) -> AggregatedScore:
         """Aggregate NLI scores across evidence with authority-aware weighting."""

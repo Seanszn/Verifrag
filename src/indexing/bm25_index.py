@@ -45,4 +45,21 @@ class BM25Index:
     def load(self):
         if os.path.exists(self.save_path):
             with open(self.save_path, 'rb') as f:
-                self.corpus, self.metadatas, self.bm25 = pickle.load(f)
+                payload = pickle.load(f)
+
+            if isinstance(payload, tuple) and len(payload) == 3:
+                self.corpus, self.metadatas, self.bm25 = payload
+                return
+
+            if isinstance(payload, dict) and isinstance(payload.get("chunks"), list):
+                self.metadatas = list(payload["chunks"])
+                self.corpus = [str(item.get("text", "")) for item in self.metadatas]
+                tokenized_corpus = [doc.lower().split() for doc in self.corpus]
+                self.bm25 = BM25Okapi(tokenized_corpus)
+                if "k1" in payload:
+                    self.bm25.k1 = payload["k1"]
+                if "b" in payload:
+                    self.bm25.b = payload["b"]
+                return
+
+            raise ValueError(f"Unsupported BM25 index format in {self.save_path}")

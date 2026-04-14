@@ -18,3 +18,7 @@ class BaseLLM(ABC):
     def generate_with_context(self, query: str, context: List[str], max_tokens: Optional[int] = None) -> str:
         """Generate a response with retrieved context."""
         pass
+
+    def generate_legal_answer(self, query: str, max_tokens: Optional[int] = None) -> str:
+        """Compatibility wrapper for direct legal analysis calls."""
+        return self.generate(query, max_tokens=max_tokens)

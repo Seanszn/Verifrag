@@ -56,6 +56,9 @@ class LLMConfig:
     host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     temperature: float = 0.1
     max_tokens: int = 2048
+    num_ctx: int | None = int(value) if (value := os.getenv("OLLAMA_NUM_CTX")) else None
+    num_batch: int | None = int(value) if (value := os.getenv("OLLAMA_NUM_BATCH")) else None
+    num_gpu: int | None = int(value) if (value := os.getenv("OLLAMA_NUM_GPU")) else None
 
 
 @dataclass
@@ -129,8 +132,8 @@ class VerificationConfig:
         "state_trial": 0.35,
         "unknown": 0.40,
     })
-    threshold_verified: float = 0.92
-    threshold_supported: float = 0.82
+    threshold_verified: float = 0.70
+    threshold_supported: float = 0.55
     threshold_weak: float = 0.50
     threshold_contradicted: float = 0.60
     fuzzy_match_threshold: float = 85.0
