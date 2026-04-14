@@ -22,16 +22,23 @@ class _FakeLLM:
     def __init__(self):
         self.context_calls = []
         self.direct_queries = []
+        self.direct_history_calls = []
 
-    def generate_legal_answer(self, query: str) -> str:
-        assert query == "Explain Miranda warnings"
+    def generate_legal_answer(self, query: str, *, conversation_history=None) -> str:
         self.direct_queries.append(query)
+        self.direct_history_calls.append(list(conversation_history or []))
         return "The Court held that Miranda warnings are required."
 
-    def generate_with_context(self, query: str, context, max_tokens=None) -> str:
-        assert query == "Explain Miranda warnings"
+    def generate_with_context(
+        self,
+        query: str,
+        context,
+        max_tokens=None,
+        *,
+        conversation_history=None,
+    ) -> str:
         _ = max_tokens
-        self.context_calls.append((query, list(context)))
+        self.context_calls.append((query, list(context), list(conversation_history or [])))
         return "The Court held that Miranda warnings are required."
 
 
@@ -111,12 +118,14 @@ def test_pipeline_runs_real_verifier_logic_when_retrieval_is_available(tmp_path:
     assert meta["claims"][0]["verification"]["is_contradicted"] is False
     assert meta["claims"][0]["verification"]["best_chunk"]["citation"] == "384 U.S. 436"
     assert meta["claims"][0]["verification"]["final_score"] > 0.5
+    assert meta["conversation_context_message_count"] == 0
     assert assistant["role"] == "assistant"
     assert llm.direct_queries == []
     assert len(llm.context_calls) == 1
     assert "Case name: Miranda v. Arizona" in llm.context_calls[0][1][0]
     assert "384 U.S. 436" in llm.context_calls[0][1][0]
     assert "Miranda warnings are required" in llm.context_calls[0][1][0]
+    assert llm.context_calls[0][2] == []
 
 
 def test_pipeline_reports_skipped_verification_without_indices(
@@ -150,7 +159,66 @@ def test_pipeline_reports_skipped_verification_without_indices(
     assert meta["verification_backend_status"] == "skipped:no_retriever"
     assert meta["claims"]
     assert llm.direct_queries == ["Explain Miranda warnings"]
+    assert llm.direct_history_calls == [[]]
     assert llm.context_calls == []
+
+
+def test_pipeline_can_skip_decomposition_and_verification_for_generation_only(tmp_path: Path):
+    db = Database(tmp_path / "pipeline.db")
+    db.initialize()
+    user = db.create_user("alice", "hashed")
+
+    llm = _FakeLLM()
+    pipeline = QueryPipeline(
+        db=db,
+        llm=llm,
+        retriever=_FakeRetriever(),
+        enable_verification=False,
+    )
+
+    result = pipeline.run(user_id=user["id"], query="Explain Miranda warnings")
+
+    meta = result["pipeline"]
+
+    assert meta["retrieval_used"] is True
+    assert meta["generation_mode"] == "rag"
+    assert meta["verification_enabled"] is False
+    assert meta["verification_backend_status"] == "disabled:config"
+    assert meta["claim_count"] == 0
+    assert meta["claims"] == []
+    assert len(llm.context_calls) == 1
+    assert llm.context_calls[0][2] == []
+
+
+def test_pipeline_uses_recent_messages_as_conversation_context(tmp_path: Path):
+    db = Database(tmp_path / "pipeline.db")
+    db.initialize()
+    user = db.create_user("alice", "hashed")
+    conversation = db.create_conversation(user["id"], "Miranda follow-up")
+
+    db.add_message(conversation["id"], "user", "Explain Miranda warnings.")
+    db.add_message(conversation["id"], "assistant", "Miranda requires warnings during custodial interrogation.")
+    db.add_message(conversation["id"], "user", "What about the public safety exception?")
+
+    llm = _FakeLLM()
+    pipeline = QueryPipeline(db=db, llm=llm, retriever=None)
+
+    result = pipeline.run(
+        user_id=user["id"],
+        query="Does the public safety exception change that rule?",
+        conversation_id=conversation["id"],
+    )
+
+    assert result["pipeline"]["conversation_context_message_count"] == 3
+    assert llm.direct_queries == ["Does the public safety exception change that rule?"]
+    assert llm.direct_history_calls == [[
+        {"role": "user", "content": "Explain Miranda warnings."},
+        {
+            "role": "assistant",
+            "content": "Miranda requires warnings during custodial interrogation.",
+        },
+        {"role": "user", "content": "What about the public safety exception?"},
+    ]]
 
 
 def test_load_default_retriever_uses_discovered_artifacts(

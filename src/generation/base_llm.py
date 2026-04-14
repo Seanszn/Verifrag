@@ -3,7 +3,7 @@ Abstract LLM interface.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Any, List, Optional
 
 
 class BaseLLM(ABC):
@@ -15,6 +15,13 @@ class BaseLLM(ABC):
         pass
 
     @abstractmethod
-    def generate_with_context(self, query: str, context: List[str], max_tokens: Optional[int] = None) -> str:
+    def generate_with_context(
+        self,
+        query: str,
+        context: List[str],
+        max_tokens: Optional[int] = None,
+        *,
+        conversation_history: list[dict[str, Any]] | None = None,
+    ) -> str:
         """Generate a response with retrieved context."""
         pass

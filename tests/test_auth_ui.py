@@ -284,4 +284,122 @@ def test_submit_query_uses_backend_response_instead_of_placeholder(backend_stub:
         "The court held that Miranda warnings are required."
     )
     assert at.session_state["last_pipeline"]["claim_count"] == 1
+    assert at.session_state["current_query"] == ""
+    assert at.session_state["page"] == "response"
     assert "Placeholder response" not in at.session_state["conversation_messages"][1]["content"]
+
+
+def test_submit_query_appends_to_active_conversation_without_history_reload(backend_stub: BackendStub):
+    backend_stub.queue(
+        "POST",
+        "/api/auth/login",
+        FakeResponse(
+            200,
+            {
+                "token": "token-followup",
+                "user": {"id": 12, "username": "followup_user", "created_at": "2026-04-14T12:00:00+00:00"},
+            },
+        ),
+    )
+    backend_stub.queue(
+        "GET",
+        "/api/conversations",
+        FakeResponse(
+            200,
+            [
+                {
+                    "id": 33,
+                    "user_id": 12,
+                    "title": "Miranda follow-up",
+                    "created_at": "2026-04-14T12:00:00+00:00",
+                    "updated_at": "2026-04-14T12:05:00+00:00",
+                }
+            ],
+        ),
+    )
+    backend_stub.queue(
+        "GET",
+        "/api/conversations/33/messages",
+        FakeResponse(
+            200,
+            [
+                {
+                    "id": 51,
+                    "conversation_id": 33,
+                    "role": "user",
+                    "content": "Explain Miranda warnings.",
+                    "created_at": "2026-04-14T12:00:01+00:00",
+                    "metadata_json": None,
+                },
+                {
+                    "id": 52,
+                    "conversation_id": 33,
+                    "role": "assistant",
+                    "content": "Miranda requires warnings during custodial interrogation.",
+                    "created_at": "2026-04-14T12:00:03+00:00",
+                    "metadata_json": "{\"claim_count\":1}",
+                },
+            ],
+        ),
+    )
+    backend_stub.queue(
+        "POST",
+        "/api/query",
+        FakeResponse(
+            200,
+            {
+                "conversation": {
+                    "id": 33,
+                    "user_id": 12,
+                    "title": "Miranda follow-up",
+                    "created_at": "2026-04-14T12:00:00+00:00",
+                    "updated_at": "2026-04-14T12:06:30+00:00",
+                },
+                "user_message": {
+                    "id": 53,
+                    "conversation_id": 33,
+                    "role": "user",
+                    "content": "What about the public safety exception?",
+                    "created_at": "2026-04-14T12:06:00+00:00",
+                    "metadata_json": None,
+                },
+                "assistant_message": {
+                    "id": 54,
+                    "conversation_id": 33,
+                    "role": "assistant",
+                    "content": "The public safety exception can permit limited unwarned questioning.",
+                    "created_at": "2026-04-14T12:06:30+00:00",
+                    "metadata_json": "{\"claim_count\":1}",
+                },
+                "pipeline": {
+                    "llm_backend_status": "ok",
+                    "retrieval_backend_status": "unavailable:no_indices",
+                    "verification_backend_status": "skipped:no_retriever",
+                    "claim_count": 1,
+                    "conversation_context_message_count": 2,
+                },
+            },
+        ),
+    )
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.text_input(key="login_username").input("followup_user")
+    at.text_input(key="login_password").input("strong_password")
+    at.button(key="login_submit").click().run()
+    at.button(key="home_query").click().run()
+    at.button(key="session_33").click().run()
+    at.text_area(key="current_query").input("What about the public safety exception?")
+    at.button(key="submit_query").click().run()
+
+    assert at.session_state["selected_conversation_id"] == 33
+    assert len(at.session_state["conversation_messages"]) == 4
+    assert at.session_state["conversation_messages"][3]["content"] == (
+        "The public safety exception can permit limited unwarned questioning."
+    )
+    assert at.session_state["last_pipeline"]["conversation_context_message_count"] == 2
+    assert [call["path"] for call in backend_stub.calls] == [
+        "/api/auth/login",
+        "/api/conversations",
+        "/api/conversations/33/messages",
+        "/api/query",
+    ]

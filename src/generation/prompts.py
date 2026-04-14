@@ -4,7 +4,7 @@ Legal prompt templates for direct analysis and retrieval-grounded generation.
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Any, Sequence
 
 
 GENERAL_LEGAL_SYSTEM_PROMPT = """You are a legal analysis assistant.
@@ -25,6 +25,8 @@ GENERAL_LEGAL_USER_TEMPLATE = """User question:
 {query}
 
 Answering instructions:
+- Use any recent conversation history only to resolve follow-up references or
+  maintain continuity. Do not treat prior turns as legal authority.
 - Give a direct answer first.
 - Explain the controlling legal rule or likely rule.
 - Separate what is known from what depends on jurisdiction or additional facts.
@@ -62,6 +64,8 @@ Retrieved context:
 {context}
 
 Answering instructions:
+- Use any recent conversation history only to interpret follow-up references.
+  The retrieved context remains the only authority for the answer.
 - Start with one direct plain-text answer sentence.
 - Then provide analysis based only on the retrieved context, using complete
   plain-text sentences.
@@ -82,23 +86,59 @@ def format_retrieved_context(chunks: Sequence[str]) -> str:
     )
 
 
-def build_general_legal_prompt(query: str) -> str:
+def format_conversation_history(messages: Sequence[dict[str, Any]] | None) -> str:
+    """Render recent conversation turns into a compact prompt block."""
+    if not messages:
+        return ""
+
+    formatted_messages: list[str] = []
+    for message in messages:
+        role = "Assistant" if message.get("role") == "assistant" else "User"
+        content = " ".join(str(message.get("content") or "").split())
+        if not content:
+            continue
+        formatted_messages.append(f"{role}: {content}")
+
+    if not formatted_messages:
+        return ""
+    return "\n".join(formatted_messages)
+
+
+def _conversation_history_section(messages: Sequence[dict[str, Any]] | None) -> str:
+    history = format_conversation_history(messages)
+    if not history:
+        return ""
+    return f"Recent conversation history:\n{history}\n\n"
+
+
+def build_general_legal_prompt(
+    query: str,
+    conversation_history: Sequence[dict[str, Any]] | None = None,
+) -> str:
     """Build a direct legal-analysis prompt without retrieval context."""
+    history_section = _conversation_history_section(conversation_history)
     return (
         f"{GENERAL_LEGAL_SYSTEM_PROMPT.strip()}\n\n"
+        f"{history_section}"
         f"{GENERAL_LEGAL_USER_TEMPLATE.format(query=query.strip()).strip()}"
     )
 
 
-def build_rag_legal_prompt(query: str, context: Sequence[str] | str) -> str:
+def build_rag_legal_prompt(
+    query: str,
+    context: Sequence[str] | str,
+    conversation_history: Sequence[dict[str, Any]] | None = None,
+) -> str:
     """Build a legal RAG prompt from a user query and retrieved authorities."""
     if isinstance(context, str):
         formatted_context = context.strip() or "[No retrieved context provided]"
     else:
         formatted_context = format_retrieved_context(context)
+    history_section = _conversation_history_section(conversation_history)
 
     return (
         f"{RAG_LEGAL_SYSTEM_PROMPT.strip()}\n\n"
+        f"{history_section}"
         f"{RAG_LEGAL_USER_TEMPLATE.format(query=query.strip(), context=formatted_context).strip()}"
     )
 

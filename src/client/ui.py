@@ -18,6 +18,7 @@ from src.client.api_client import (
     register as register_request,
     set_auth,
     submit_query as submit_query_request,
+    upload_documents as upload_documents_request,
 )
 
 
@@ -48,6 +49,7 @@ def initialize_state() -> None:
         "show_upload_hint": False,
         "upload_notice": None,
         "last_pipeline": None,
+        "query_error": None,
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -285,6 +287,7 @@ def reset_conversation_state() -> None:
     st.session_state["is_generating"] = False
     st.session_state["upload_notice"] = None
     st.session_state["last_pipeline"] = None
+    st.session_state["query_error"] = None
 
 
 def logout() -> None:
@@ -339,6 +342,24 @@ def render_page_intro(title: str, subtitle: str | None = None) -> None:
         st.markdown(f'<div class="vr-page-subtitle">{subtitle}</div>', unsafe_allow_html=True)
 
 
+def format_uploaded_file_summary(file_summary: dict[str, Any]) -> str:
+    filename = str(file_summary.get("filename") or file_summary.get("name") or "uploaded file")
+    size_bytes = file_summary.get("size_bytes", file_summary.get("size"))
+    chunk_count = file_summary.get("chunk_count")
+    detail_parts: list[str] = []
+
+    if isinstance(size_bytes, (int, float)):
+        detail_parts.append(f"{int(size_bytes)} bytes")
+    if isinstance(chunk_count, (int, float)):
+        detail_parts.append(f"{int(chunk_count)} chunks")
+    if file_summary.get("is_privileged") is True:
+        detail_parts.append("privileged")
+
+    if not detail_parts:
+        return f"- {filename}"
+    return f"- {filename} ({', '.join(detail_parts)})"
+
+
 def refresh_conversations() -> None:
     conversations = load_conversations()
     st.session_state["conversations"] = conversations
@@ -362,6 +383,7 @@ def load_selected_conversation_messages(*, force: bool = False) -> None:
 
     st.session_state["conversation_messages"] = load_messages(conversation_id)
     st.session_state["messages_loaded_for"] = conversation_id
+    st.session_state["query_error"] = None
 
 
 def upsert_conversation(conversation: dict[str, Any]) -> None:
@@ -497,7 +519,7 @@ def render_home_page() -> None:
 def render_upload_page() -> None:
     require_auth()
     render_header("Home", lambda: navigate(PAGE_HOME))
-    render_page_intro("Document Uploads", "Upload API wiring is pending in this branch.")
+    render_page_intro("Document Uploads", "Files are sent to the backend API and ingested server-side.")
 
     icon_base64 = ""
     icon_path = Path(__file__).parent.parent.parent / "assets" / "upload.png"
@@ -548,8 +570,13 @@ def render_upload_page() -> None:
             accept_multiple_files=True,
             label_visibility="collapsed",
         )
+        is_privileged = st.checkbox(
+            "Treat uploaded files as privileged",
+            value=True,
+            help="Privileged files stay in the user upload workspace on the server.",
+        )
         st.markdown(
-            '<p class="upload-instruction">Backend upload integration is the next change set. Files are not sent yet.</p>',
+            '<p class="upload-instruction">Selected files will be posted to the backend and chunked on the server.</p>',
             unsafe_allow_html=True,
         )
 
@@ -566,15 +593,30 @@ def render_upload_page() -> None:
                 if not uploaded_files:
                     st.error("Select at least one file before submitting.")
                 else:
-                    st.info("Upload wiring is pending. This change set only connects auth, query, and history.")
+                    try:
+                        result = upload_documents_request(
+                            list(uploaded_files),
+                            conversation_id=st.session_state.get("selected_conversation_id"),
+                            is_privileged=is_privileged,
+                        )
+                        st.session_state["uploaded_files"] = result.get("files", [])
+                        st.session_state["upload_notice"] = (
+                            "Uploaded "
+                            f"{result.get('files_uploaded', 0)} file(s) to the backend "
+                            f"and ingested {result.get('chunks_upserted', 0)} chunk(s)."
+                        )
+                        navigate(PAGE_RESPONSE)
+                    except APIError as exc:
+                        handle_api_error(exc)
 
 
 def submit_query() -> None:
     query = st.session_state["current_query"].strip()
     if not query:
-        st.error("Enter a query before submitting.")
+        st.session_state["query_error"] = "Enter a query before submitting."
         return
 
+    st.session_state["query_error"] = None
     st.session_state["is_generating"] = True
     try:
         selected_id = st.session_state.get("selected_conversation_id")
@@ -597,8 +639,8 @@ def submit_query() -> None:
         st.session_state["last_pipeline"] = result.get("pipeline")
         st.session_state["current_query"] = ""
         upsert_conversation(conversation)
-        st.rerun()
     except APIError as exc:
+        st.session_state["query_error"] = str(exc)
         handle_api_error(exc)
     finally:
         st.session_state["is_generating"] = False
@@ -639,6 +681,12 @@ def render_response_page() -> None:
 
     render_header("Home", lambda: navigate(PAGE_HOME))
 
+    if st.session_state.get("upload_notice"):
+        st.success(st.session_state["upload_notice"])
+        st.session_state["upload_notice"] = None
+    if st.session_state.get("query_error"):
+        st.error(st.session_state["query_error"])
+
     left_col, right_col = st.columns([1.1, 2.4], gap="large")
 
     with left_col:
@@ -647,6 +695,11 @@ def render_response_page() -> None:
             st.session_state["selected_conversation_id"],
         )
         render_pipeline_summary()
+        if st.session_state.get("uploaded_files"):
+            with st.container(border=True):
+                st.markdown('<div class="vr-panel-label">Uploaded Sources</div>', unsafe_allow_html=True)
+                for file_summary in st.session_state["uploaded_files"]:
+                    st.markdown(format_uploaded_file_summary(file_summary))
 
     with right_col:
         render_chat_panel(st.session_state["conversation_messages"])
@@ -665,8 +718,13 @@ def render_response_page() -> None:
                 st.session_state["is_generating"] = False
                 st.info("No active generation to stop.")
         with send_col:
-            if st.button("Submit", key="submit_query", type="primary", use_container_width=True):
-                submit_query()
+            st.button(
+                "Submit",
+                key="submit_query",
+                type="primary",
+                use_container_width=True,
+                on_click=submit_query,
+            )
 
 
 def run_client_app() -> None:

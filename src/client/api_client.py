@@ -135,6 +135,38 @@ def submit_query(query: str, conversation_id: int | None = None) -> dict[str, An
     return response.json()
 
 
+def upload_documents(
+    uploaded_files: list[Any],
+    *,
+    conversation_id: int | None = None,
+    is_privileged: bool = True,
+) -> dict[str, Any]:
+    files = [
+        (
+            "files",
+            (
+                uploaded_file.name,
+                uploaded_file.getvalue(),
+                uploaded_file.type or "application/octet-stream",
+            ),
+        )
+        for uploaded_file in uploaded_files
+    ]
+    form_data: dict[str, str] = {"is_privileged": str(is_privileged).lower()}
+    if conversation_id is not None:
+        form_data["conversation_id"] = str(conversation_id)
+
+    response = api_request(
+        "POST",
+        "/api/uploads",
+        include_content_type=False,
+        data=form_data,
+        files=files,
+    )
+    _raise_for_api_error(response, "Upload failed.")
+    return response.json()
+
+
 def set_auth(auth_payload: dict[str, Any]) -> None:
     st.session_state["auth_token"] = auth_payload["token"]
     st.session_state["user"] = auth_payload["user"]

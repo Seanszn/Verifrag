@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import Depends, Header, HTTPException, status
 
+from src.config import VERIFICATION
 from src.pipeline import QueryPipeline
 from src.storage.database import Database
 
@@ -13,7 +14,7 @@ from src.storage.database import Database
 database = Database()
 database.initialize()
 
-pipeline = QueryPipeline(db=database)
+pipeline = QueryPipeline(db=database, enable_verification=VERIFICATION.enabled)
 AUTHENTICATE_HEADERS = {"WWW-Authenticate": "Bearer"}
 
 

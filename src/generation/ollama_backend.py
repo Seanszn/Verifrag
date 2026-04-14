@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import requests
 
@@ -54,13 +54,29 @@ class OllamaBackend(BaseLLM):
         query: str,
         context: List[str],
         max_tokens: Optional[int] = None,
+        *,
+        conversation_history: list[dict[str, Any]] | None = None,
     ) -> str:
-        prompt = build_rag_legal_prompt(query, context)
+        prompt = build_rag_legal_prompt(
+            query,
+            context,
+            conversation_history=conversation_history,
+        )
         return self.generate(prompt, max_tokens=max_tokens)
 
-    def generate_legal_answer(self, query: str) -> str:
+    def generate_legal_answer(
+        self,
+        query: str,
+        *,
+        conversation_history: list[dict[str, Any]] | None = None,
+    ) -> str:
         """Convenience wrapper for non-retrieval legal prompting."""
-        return self.generate(build_general_legal_prompt(query))
+        return self.generate(
+            build_general_legal_prompt(
+                query,
+                conversation_history=conversation_history,
+            )
+        )
 
     def health_check(self) -> bool:
         """Best-effort Ollama reachability check."""

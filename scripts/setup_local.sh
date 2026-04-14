@@ -50,6 +50,7 @@ text = env_path.read_text(encoding="utf-8")
 lines = text.splitlines()
 updates = {
     "DEPLOYMENT_MODE": "local",
+    "ENABLE_VERIFICATION": "false",
 }
 remove_keys = {"LLM_PROVIDER", "VECTOR_STORE"}
 
@@ -88,4 +89,5 @@ fi
 
 echo
 echo "Local setup complete."
+echo "Verification is disabled by default for faster query-generation tests."
 echo "Run: ./scripts/run_local.sh"
