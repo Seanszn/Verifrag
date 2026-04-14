@@ -1,0 +1,22 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: legalverifirag-api
+    env_file:
+      - .env
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      DATABASE_PATH: /app/data/legalverifirag.db
+      CHROMA_PATH: /app/data/index/chroma
+      OLLAMA_HOST: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./temp_uploads:/app/temp_uploads
+    restart: unless-stopped
