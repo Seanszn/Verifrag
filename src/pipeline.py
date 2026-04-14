@@ -17,6 +17,8 @@ from src.verification.claim_decomposer import decompose_document
 from src.verification.nli_verifier import AggregatedScore, NLIVerifier
 from src.verification.verdict import classify_verification
 
+CONVERSATION_CONTEXT_MESSAGE_LIMIT = 8
+
 
 class QueryPipeline:
     """Owns the server-side query lifecycle."""
@@ -27,6 +29,8 @@ class QueryPipeline:
         llm: OllamaBackend | None = None,
         retriever: HybridRetriever | None = None,
         verifier: NLIVerifier | None = None,
+        *,
+        enable_verification: bool = True,
     ) -> None:
         self.db = db
         self.llm = llm or OllamaBackend()
@@ -36,6 +40,7 @@ class QueryPipeline:
             self.retriever = retriever
             self.retriever_status = "configured"
         self.verifier = verifier
+        self.enable_verification = enable_verification
 
     def run(
         self,
@@ -44,9 +49,10 @@ class QueryPipeline:
         conversation_id: Optional[int] = None,
     ) -> dict[str, Any]:
         conversation = self._ensure_conversation(user_id, conversation_id, query)
+        conversation_context = self._load_conversation_context(conversation["id"], user_id)
         user_message = self.db.add_message(conversation["id"], "user", query)
 
-        assistant_text, pipeline_meta = self._generate_response(query)
+        assistant_text, pipeline_meta = self._generate_response(query, conversation_context)
         assistant_message = self.db.add_message(
             conversation["id"],
             "assistant",
@@ -74,7 +80,30 @@ class QueryPipeline:
                 return conversation
         return self.db.create_conversation(user_id, _default_title(query))
 
-    def _generate_response(self, query: str) -> tuple[str, dict[str, Any]]:
+    def _load_conversation_context(
+        self,
+        conversation_id: int,
+        user_id: int,
+    ) -> list[dict[str, Any]]:
+        messages = self.db.list_recent_messages(
+            conversation_id,
+            user_id,
+            limit=CONVERSATION_CONTEXT_MESSAGE_LIMIT,
+        )
+        return [
+            {
+                "role": message["role"],
+                "content": message["content"],
+            }
+            for message in messages
+            if message.get("content")
+        ]
+
+    def _generate_response(
+        self,
+        query: str,
+        conversation_context: list[dict[str, Any]] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
         retrieved_chunks = []
         retrieval_status = self.retriever_status
         retrieval_error = False
@@ -91,10 +120,14 @@ class QueryPipeline:
                 response = self.llm.generate_with_context(
                     query,
                     [_format_chunk_for_prompt(chunk) for chunk in retrieved_chunks],
+                    conversation_history=conversation_context,
                 )
                 generation_mode = "rag"
             else:
-                response = self.llm.generate_legal_answer(query)
+                response = self.llm.generate_legal_answer(
+                    query,
+                    conversation_history=conversation_context,
+                )
                 generation_mode = "direct"
             backend_status = "ok"
         except Exception as exc:  # pragma: no cover - defensive path for live Ollama failures
@@ -105,8 +138,6 @@ class QueryPipeline:
             backend_status = f"error:{exc.__class__.__name__}"
             generation_mode = "rag" if retrieved_chunks else "direct"
 
-        raw_claims = decompose_document({"id": "assistant_response", "full_text": response})
-        claims = [claim.to_dict() for claim in raw_claims]
         meta = {
             "llm_provider": "ollama",
             "llm_backend_status": backend_status,
@@ -115,10 +146,21 @@ class QueryPipeline:
             "retrieval_backend_status": retrieval_status,
             "retrieval_chunk_count": len(retrieved_chunks),
             "retrieved_chunks": [_serialize_chunk(chunk) for chunk in retrieved_chunks],
-            "claim_count": len(claims),
-            "claims": claims,
-            "verification_backend_status": "skipped:no_retriever",
+            "verification_enabled": self.enable_verification,
+            "conversation_context_message_count": len(conversation_context or []),
         }
+
+        if not self.enable_verification:
+            meta["claim_count"] = 0
+            meta["claims"] = []
+            meta["verification_backend_status"] = "disabled:config"
+            return response, meta
+
+        raw_claims = decompose_document({"id": "assistant_response", "full_text": response})
+        claims = [claim.to_dict() for claim in raw_claims]
+        meta["claim_count"] = len(claims)
+        meta["claims"] = claims
+        meta["verification_backend_status"] = "skipped:no_retriever"
 
         if not raw_claims:
             meta["verification_backend_status"] = "skipped:no_claims"

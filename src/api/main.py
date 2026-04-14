@@ -10,6 +10,7 @@ from src.api import dependencies
 from src.api.auth import router as auth_router
 from src.api.conversations import router as conversations_router
 from src.api.query import router as query_router
+from src.api.uploads import router as uploads_router
 
 
 @asynccontextmanager
@@ -28,6 +29,7 @@ app = FastAPI(title="VerifRAG API", lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(conversations_router)
 app.include_router(query_router)
+app.include_router(uploads_router)
 
 
 @app.get("/health")

@@ -20,6 +20,13 @@ except ImportError:
 
 load_dotenv()
 
+
+def env_flag(name: str, default: bool) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
 # ============== PATHS ==============
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -52,7 +59,7 @@ class LLMConfig:
     provider: LLMProvider = field(
         default_factory=lambda: LLMProvider(os.getenv("LLM_PROVIDER", "ollama"))
     )
-    model: str = os.getenv("LLM_MODEL", "deepseek-r1:8b")
+    model: str = os.getenv("LLM_MODEL", "llama3.1:8b")
     host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     temperature: float = 0.1
     max_tokens: int = 2048
@@ -114,6 +121,7 @@ class RetrievalConfig:
 
 @dataclass
 class VerificationConfig:
+    enabled: bool = env_flag("ENABLE_VERIFICATION", True)
     agg_alpha: float = 0.35
     agg_beta: float = 0.20
     agg_gamma: float = 0.30
@@ -166,7 +174,7 @@ class DataConfig:
 # ============== COST TRACKING ==============
 
 LLM_PRICING = {
-    "deepseek-r1:8b": {"input": 0.0, "output": 0.0},
+    "llama3.1:8b": {"input": 0.0, "output": 0.0},
 }
 
 # ============== INSTANCES ==============

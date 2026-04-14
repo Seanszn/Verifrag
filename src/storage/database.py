@@ -251,3 +251,32 @@ class Database:
                 (conversation_id,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def list_recent_messages(
+        self,
+        conversation_id: int,
+        user_id: int,
+        *,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+
+        with self.connect() as conn:
+            owner = conn.execute(
+                "SELECT 1 FROM conversations WHERE id = ? AND user_id = ?",
+                (conversation_id, user_id),
+            ).fetchone()
+            if not owner:
+                return []
+            rows = conn.execute(
+                """
+                SELECT id, conversation_id, role, content, created_at, metadata_json
+                FROM messages
+                WHERE conversation_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (conversation_id, limit),
+            ).fetchall()
+        return [dict(row) for row in reversed(rows)]

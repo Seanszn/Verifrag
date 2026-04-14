@@ -50,6 +50,12 @@ if (Test-Path ".env") {
         $envText += "`r`nDEPLOYMENT_MODE=local`r`n"
     }
 
+    if ($envText -match "(?m)^ENABLE_VERIFICATION=") {
+        $envText = [regex]::Replace($envText, "(?m)^ENABLE_VERIFICATION=.*$", "ENABLE_VERIFICATION=false")
+    } else {
+        $envText += "`r`nENABLE_VERIFICATION=false`r`n"
+    }
+
     Set-Content ".env" $envText -NoNewline
 }
 
@@ -71,4 +77,5 @@ if (-not $SkipOllamaPull) {
 
 Write-Host ""
 Write-Host "Local setup complete."
+Write-Host "Verification is disabled by default for faster query-generation tests."
 Write-Host "Run: .\scripts\run_local.ps1"

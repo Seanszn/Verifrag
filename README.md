@@ -20,6 +20,7 @@ Local deployment is the default configuration:
 - `LLM_MODEL=llama3.1:8b`
 - `OLLAMA_HOST=http://localhost:11434`
 - `CHROMA_PATH=data/index/chroma`
+- `ENABLE_VERIFICATION=false` for faster query-generation smoke tests
 
 This is already the default in `.env.example` and `src/config.py`.
 
@@ -79,6 +80,8 @@ ollama pull llama3.1:8b
 
 `.env.example` includes local API and UI defaults.
 
+For fast backend query testing, local setup disables claim verification by default. Set `ENABLE_VERIFICATION=true` when you want the full decomposition + NLI verification path again.
+
 ## Engineering Notes
 
 - Coding standards: `CODING_STANDARDS.md`
@@ -89,9 +92,6 @@ ollama pull llama3.1:8b
 ```bash
 # Download a small SCOTUS test batch (recommended first)
 python scripts/download_corpus.py --scotus --limit 10
-
-# Add local files to the corpus (PDF, DOCX, TXT, Markdown)
-python scripts/ingest_user_files.py path/to/file.pdf path/to/notes.md --rebuild-index
 
 # Full corpus sync examples
 python scripts/download_corpus.py --all
@@ -104,6 +104,8 @@ python scripts/build_index.py
 python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
 streamlit run src/app.py
 ```
+
+In the local startup scripts, `/api/query` runs in generation-only mode by default, so responses return without claim decomposition or NLI verification.
 
 ## Weekly Corpus Updates (Incremental)
 
@@ -156,19 +158,23 @@ Note: This updates the corpus JSONL files. Rebuild search indices after updates 
 
 ## Add Your Own Files
 
-Use `scripts/ingest_user_files.py` to parse local PDFs, DOCX files, plain text, or Markdown into the same raw/processed JSONL corpus format used by the rest of the system.
+Upload local PDFs, DOCX files, plain text, or Markdown through the Streamlit client or by posting to `POST /api/uploads`. The backend parses the files and stores them in a per-user workspace.
 
 ```bash
-python scripts/ingest_user_files.py ./my-brief.pdf ./draft-order.docx
-python scripts/ingest_user_files.py ./uploads --recursive --rebuild-index
+# Start the backend
+python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
+
+# Then use the Upload Documents page in the Streamlit client
+streamlit run src/app.py
 ```
 
-By default this writes:
+By default uploaded files are written under:
 
-- `data/raw/user_uploads.jsonl`
-- `data/processed/user_upload_chunks.jsonl`
+- `data/uploads/user_<id>/raw/user_uploads.jsonl`
+- `data/uploads/user_<id>/processed/user_upload_chunks.jsonl`
+- `data/uploads/user_<id>/files/`
 
-Pass `--rebuild-index` if you want the newly ingested files to be searchable immediately.
+The current branch ingests uploads server-side and stores chunked JSONL output, but it does not yet rebuild the main retrieval index automatically.
 
 ## Current Repository Status
 
@@ -176,7 +182,7 @@ This repository contains a mix of implemented modules and scaffolding:
 
 - `scripts/download_corpus.py` is implemented and usable
 - `scripts/build_index.py` builds local ChromaDB and BM25 indices from JSONL inputs
-- `src/api/main.py` provides FastAPI auth, conversation, and query endpoints
+- `src/api/main.py` provides FastAPI auth, conversation, query, and upload endpoints
 - `src/app.py` is a thin Streamlit client for the backend API
 - `src/pipeline.py` runs server-side query orchestration and persists history
 
