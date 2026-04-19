@@ -125,6 +125,12 @@ def load_messages(conversation_id: int) -> list[dict[str, Any]]:
     return response.json()
 
 
+def load_interactions(conversation_id: int) -> list[dict[str, Any]]:
+    response = api_request("GET", f"/api/conversations/{conversation_id}/interactions")
+    _raise_for_api_error(response, "Could not load interaction evidence.")
+    return response.json()
+
+
 def submit_query(query: str, conversation_id: int | None = None) -> dict[str, Any]:
     response = api_request(
         "POST",

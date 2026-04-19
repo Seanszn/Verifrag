@@ -42,8 +42,14 @@ def test_upload_ingests_text_file_to_user_workspace(monkeypatch, tmp_path: Path)
 
     user = test_db.create_user("alice", hash_password("password123"))
     token = test_db.create_session(user["id"])
+    index_build_calls: list[int] = []
 
     monkeypatch.setattr(uploads, "USER_UPLOADS_ROOT", tmp_path / "uploads")
+    monkeypatch.setattr(
+        uploads,
+        "build_user_upload_indices",
+        lambda user_id, *, uploads_root=uploads.USER_UPLOADS_ROOT: index_build_calls.append(user_id),
+    )
 
     with TestClient(app) as client:
         response = client.post(
@@ -91,3 +97,4 @@ def test_upload_ingests_text_file_to_user_workspace(monkeypatch, tmp_path: Path)
     assert raw_rows[0]["is_privileged"] is True
     assert processed_rows
     assert all(row["doc_id"] == raw_rows[0]["id"] for row in processed_rows)
+    assert index_build_calls == [user["id"]]

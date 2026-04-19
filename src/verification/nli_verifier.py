@@ -38,6 +38,8 @@ class AggregatedScore:
     best_chunk: Optional[LegalChunk]
     support_ratio: float
     component_scores: Dict[str, float]
+    best_contradicting_chunk_idx: int = -1
+    best_contradicting_chunk: Optional[LegalChunk] = None
 
 
 class NLIVerifier:
@@ -249,6 +251,7 @@ class NLIVerifier:
         auth_weighted_entail = float(np.sum(entailments * combined_weights) / weight_sum)
 
         auth_contra = contradictions * authority_weights
+        best_contra_idx = int(np.argmax(auth_contra))
         max_contra = float(np.max(auth_contra))
         is_contradicted = max_contra > self.contradiction_threshold
         contra_penalty = max_contra if is_contradicted else 0.0
@@ -269,11 +272,15 @@ class NLIVerifier:
             support_ratio=support_ratio,
             component_scores={
                 "max_pool": max_pool,
+                "best_entailment": float(entailments[best_idx]),
                 "support_ratio": support_ratio,
                 "auth_weighted_entail": auth_weighted_entail,
                 "max_contradiction": max_contra,
+                "best_contradiction": float(contradictions[best_contra_idx]),
                 "contra_penalty": contra_penalty,
             },
+            best_contradicting_chunk_idx=nli_scores[best_contra_idx].chunk_idx,
+            best_contradicting_chunk=nli_scores[best_contra_idx].chunk,
         )
 
     @staticmethod
@@ -285,4 +292,6 @@ class NLIVerifier:
             best_chunk=None,
             support_ratio=0.0,
             component_scores={},
+            best_contradicting_chunk_idx=-1,
+            best_contradicting_chunk=None,
         )

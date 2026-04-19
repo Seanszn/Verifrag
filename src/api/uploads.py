@@ -18,6 +18,7 @@ from src.config import DATA_DIR
 from src.ingestion.chunker import chunk_document
 from src.ingestion.document import LegalDocument
 from src.ingestion.pdf_parser import PDFParserError, parse_pdf_to_document
+from src.retrieval.user_uploads import build_user_upload_indices
 
 try:
     from docx import Document as DocxDocument
@@ -124,6 +125,10 @@ async def upload_documents(
 
     _upsert_jsonl_rows(raw_path, raw_rows)
     _upsert_jsonl_rows(processed_path, processed_rows)
+    build_user_upload_indices(
+        current_user["id"],
+        uploads_root=USER_UPLOADS_ROOT,
+    )
 
     return UploadResponse(
         conversation_id=conversation_id,

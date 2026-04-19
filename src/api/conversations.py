@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.api.dependencies import get_current_user, get_db
-from src.api.schemas import ConversationCreateRequest, ConversationSummary, MessageResponse
+from src.api.schemas import (
+    ConversationCreateRequest,
+    ConversationSummary,
+    InteractionDetailResponse,
+    MessageResponse,
+)
 from src.storage.database import Database
 
 
@@ -41,3 +47,119 @@ def list_messages(
     if conversation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
     return db.list_messages(conversation_id, current_user["id"])
+
+
+@router.get("/{conversation_id}/interactions", response_model=list[InteractionDetailResponse])
+def list_interactions(
+    conversation_id: int,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> list[dict[str, Any]]:
+    conversation = db.get_conversation(conversation_id, current_user["id"])
+    if conversation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+
+    interactions = db.list_interactions(conversation_id, current_user["id"])
+    payloads: list[dict[str, Any]] = []
+    for interaction in interactions:
+        claims = [
+            _decode_metadata_or_fallback(claim)
+            for claim in db.list_verified_claims(interaction["id"], current_user["id"])
+        ]
+        claim_citation_links = [
+            _decode_claim_citation_link(link)
+            for link in db.list_claim_citation_links(interaction["id"], current_user["id"])
+        ]
+        payloads.append(
+            {
+                "interaction": interaction,
+                "claims": _attach_claim_citation_links(claims, claim_citation_links),
+                "citations": [
+                    _decode_metadata_or_fallback(citation)
+                    for citation in db.list_interaction_citations(interaction["id"], current_user["id"])
+                ],
+                "claim_citation_links": claim_citation_links,
+                "contradictions": [
+                    _decode_metadata_or_fallback(contradiction)
+                    for contradiction in db.list_contradictions(interaction["id"], current_user["id"])
+                ],
+            }
+        )
+    return payloads
+
+
+def _decode_metadata_or_fallback(row: dict[str, Any]) -> dict[str, Any]:
+    metadata_json = row.get("metadata_json")
+    if isinstance(metadata_json, str):
+        try:
+            payload = json.loads(metadata_json)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            return payload
+
+    fallback = dict(row)
+    fallback.pop("metadata_json", None)
+
+    span_json = fallback.get("span_json")
+    if isinstance(span_json, str):
+        try:
+            fallback["span"] = json.loads(span_json)
+        except json.JSONDecodeError:
+            fallback["span"] = None
+        fallback.pop("span_json", None)
+
+    return fallback
+
+
+def _decode_claim_citation_link(row: dict[str, Any]) -> dict[str, Any]:
+    payload = _decode_metadata_or_fallback(row)
+    payload.pop("citation_metadata_json", None)
+    payload["claim_id"] = row.get("claim_id")
+    payload["chunk_id"] = row.get("chunk_id")
+    payload["doc_id"] = row.get("doc_id")
+    payload["source_label"] = row.get("source_label")
+
+    citation_payload = _decode_nested_metadata(
+        row.get("citation_metadata_json"),
+        fallback={
+            "chunk_id": row.get("chunk_id"),
+            "doc_id": row.get("doc_id"),
+            "source_label": row.get("source_label"),
+        },
+    )
+    payload["citation"] = citation_payload
+    return payload
+
+
+def _decode_nested_metadata(metadata_json: Any, *, fallback: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(metadata_json, str):
+        try:
+            payload = json.loads(metadata_json)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            return payload
+    return dict(fallback)
+
+
+def _attach_claim_citation_links(
+    claims: list[dict[str, Any]],
+    claim_citation_links: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    links_by_claim_id: dict[str, list[dict[str, Any]]] = {}
+    for link in claim_citation_links:
+        claim_id = link.get("claim_id")
+        if isinstance(claim_id, str) and claim_id:
+            links_by_claim_id.setdefault(claim_id, []).append(link)
+
+    enriched_claims: list[dict[str, Any]] = []
+    for claim in claims:
+        enriched_claim = dict(claim)
+        claim_id = enriched_claim.get("claim_id")
+        if isinstance(claim_id, str) and claim_id in links_by_claim_id:
+            enriched_claim["linked_citations"] = links_by_claim_id[claim_id]
+        else:
+            enriched_claim["linked_citations"] = []
+        enriched_claims.append(enriched_claim)
+    return enriched_claims
