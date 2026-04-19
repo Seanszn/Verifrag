@@ -12,6 +12,7 @@ from src.client.api_client import (
     APIError,
     clear_auth,
     load_conversations,
+    load_interactions,
     load_messages,
     login as login_request,
     logout as logout_request,
@@ -20,6 +21,7 @@ from src.client.api_client import (
     submit_query as submit_query_request,
     upload_documents as upload_documents_request,
 )
+from src.client.claim_analysis import extract_claim_evaluations, find_cases_for_interaction
 
 
 PAGE_LOGIN = "login"
@@ -50,6 +52,8 @@ def initialize_state() -> None:
         "upload_notice": None,
         "last_pipeline": None,
         "query_error": None,
+        "interaction_details": {},
+        "interaction_case_analysis": {},
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -288,6 +292,8 @@ def reset_conversation_state() -> None:
     st.session_state["upload_notice"] = None
     st.session_state["last_pipeline"] = None
     st.session_state["query_error"] = None
+    st.session_state["interaction_details"] = {}
+    st.session_state["interaction_case_analysis"] = {}
 
 
 def logout() -> None:
@@ -381,9 +387,155 @@ def load_selected_conversation_messages(*, force: bool = False) -> None:
     if not force and st.session_state.get("messages_loaded_for") == conversation_id:
         return
 
-    st.session_state["conversation_messages"] = load_messages(conversation_id)
+    messages = load_messages(conversation_id)
+    cache_interaction_details(load_interactions(conversation_id))
+    st.session_state["conversation_messages"] = enrich_messages_with_interaction_data(messages)
     st.session_state["messages_loaded_for"] = conversation_id
     st.session_state["query_error"] = None
+
+
+def cache_interaction_details(interaction_details: list[dict[str, Any]]) -> None:
+    for interaction_detail in interaction_details:
+        cache_interaction_detail(interaction_detail)
+
+
+def cache_interaction_detail(interaction_detail: dict[str, Any] | None) -> None:
+    if not isinstance(interaction_detail, dict):
+        return
+    interaction = interaction_detail.get("interaction")
+    if not isinstance(interaction, dict):
+        return
+    interaction_id = interaction.get("id")
+    if not isinstance(interaction_id, int):
+        return
+
+    st.session_state.setdefault("interaction_details", {})[interaction_id] = interaction_detail
+    st.session_state.setdefault("interaction_case_analysis", {})[interaction_id] = find_cases_for_interaction(
+        interaction_detail
+    )
+
+
+def build_interaction_detail_from_query_result(result: dict[str, Any]) -> dict[str, Any] | None:
+    interaction = result.get("interaction")
+    if not isinstance(interaction, dict):
+        return None
+
+    pipeline = result.get("pipeline")
+    if not isinstance(pipeline, dict):
+        pipeline = {}
+
+    claims = pipeline.get("claims")
+    citations = pipeline.get("retrieved_chunks")
+    contradictions = pipeline.get("contradictions")
+    normalized_claims = claims if isinstance(claims, list) else []
+    normalized_citations = citations if isinstance(citations, list) else []
+    claim_citation_links = _build_claim_citation_links_from_pipeline(
+        normalized_claims,
+        normalized_citations,
+    )
+
+    return {
+        "interaction": interaction,
+        "claims": _attach_claim_citation_links_to_claims(normalized_claims, claim_citation_links),
+        "citations": normalized_citations,
+        "claim_citation_links": claim_citation_links,
+        "contradictions": contradictions if isinstance(contradictions, list) else [],
+    }
+
+
+def _build_claim_citation_links_from_pipeline(
+    claims: list[dict[str, Any]],
+    citations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    citation_by_chunk_id = {
+        str(citation.get("id") or citation.get("chunk_id")): citation
+        for citation in citations
+        if citation.get("id") or citation.get("chunk_id")
+    }
+    links: list[dict[str, Any]] = []
+
+    for claim in claims:
+        verification = claim.get("verification")
+        if not isinstance(verification, dict):
+            continue
+        link_specs = [
+            (
+                "supporting",
+                verification.get("best_supporting_chunk") or verification.get("best_chunk"),
+                verification.get("best_supporting_score", verification.get("final_score")),
+            ),
+            (
+                "contradicting",
+                verification.get("best_contradicting_chunk"),
+                verification.get("best_contradiction_score"),
+            ),
+        ]
+        for relationship, chunk, score in link_specs:
+            if not isinstance(chunk, dict):
+                continue
+            chunk_id = chunk.get("id") or chunk.get("chunk_id")
+            if not chunk_id:
+                continue
+            citation = citation_by_chunk_id.get(str(chunk_id), chunk)
+            links.append(
+                {
+                    "claim_id": claim.get("claim_id"),
+                    "relationship": relationship,
+                    "score": score,
+                    "chunk_id": chunk_id,
+                    "doc_id": citation.get("doc_id"),
+                    "source_label": (
+                        citation.get("citation")
+                        or citation.get("source_file")
+                        or citation.get("source_label")
+                        or citation.get("doc_id")
+                    ),
+                    "citation": citation,
+                }
+            )
+    return links
+
+
+def _attach_claim_citation_links_to_claims(
+    claims: list[dict[str, Any]],
+    claim_citation_links: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    links_by_claim_id: dict[str, list[dict[str, Any]]] = {}
+    for link in claim_citation_links:
+        claim_id = link.get("claim_id")
+        if isinstance(claim_id, str) and claim_id:
+            links_by_claim_id.setdefault(claim_id, []).append(link)
+
+    enriched_claims: list[dict[str, Any]] = []
+    for claim in claims:
+        enriched_claim = dict(claim)
+        claim_id = enriched_claim.get("claim_id")
+        enriched_claim["linked_citations"] = (
+            links_by_claim_id.get(claim_id, []) if isinstance(claim_id, str) else []
+        )
+        enriched_claims.append(enriched_claim)
+    return enriched_claims
+
+
+def enrich_messages_with_interaction_data(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    interaction_details = st.session_state.get("interaction_details", {})
+    interaction_case_analysis = st.session_state.get("interaction_case_analysis", {})
+    enriched_messages: list[dict[str, Any]] = []
+
+    for message in messages:
+        enriched_message = dict(message)
+        interaction_id = enriched_message.get("interaction_id")
+        if enriched_message.get("role") == "assistant" and isinstance(interaction_id, int):
+            interaction_detail = interaction_details.get(interaction_id)
+            if isinstance(interaction_detail, dict):
+                enriched_message["claim_evaluations"] = extract_claim_evaluations(interaction_detail)
+                enriched_message["claim_case_analysis"] = interaction_case_analysis.get(interaction_id)
+            else:
+                enriched_message["claim_evaluations"] = []
+                enriched_message["claim_case_analysis"] = None
+        enriched_messages.append(enriched_message)
+
+    return enriched_messages
 
 
 def upsert_conversation(conversation: dict[str, Any]) -> None:
@@ -629,12 +781,15 @@ def submit_query() -> None:
             if st.session_state.get("messages_loaded_for") == conversation_id
             else []
         )
+        cache_interaction_detail(build_interaction_detail_from_query_result(result))
         st.session_state["selected_conversation_id"] = conversation_id
-        st.session_state["conversation_messages"] = [
-            *previous_messages,
-            result["user_message"],
-            result["assistant_message"],
-        ]
+        st.session_state["conversation_messages"] = enrich_messages_with_interaction_data(
+            [
+                *previous_messages,
+                result["user_message"],
+                result["assistant_message"],
+            ]
+        )
         st.session_state["messages_loaded_for"] = conversation_id
         st.session_state["last_pipeline"] = result.get("pipeline")
         st.session_state["current_query"] = ""

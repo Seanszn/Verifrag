@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 class UserResponse(BaseModel):
     id: int
     username: str
+    email: str | None = None
     created_at: str
 
 
@@ -43,10 +44,27 @@ class ConversationSummary(BaseModel):
 class MessageResponse(BaseModel):
     id: int
     conversation_id: int
+    interaction_id: int | None = None
     role: str
     content: str
     created_at: str
     metadata_json: str | None = None
+
+
+class InteractionResponse(BaseModel):
+    id: int
+    conversation_id: int
+    query: str
+    response: str | None = None
+    created_at: str
+
+
+class InteractionDetailResponse(BaseModel):
+    interaction: InteractionResponse
+    claims: list[dict[str, Any]]
+    citations: list[dict[str, Any]]
+    claim_citation_links: list[dict[str, Any]]
+    contradictions: list[dict[str, Any]]
 
 
 class QueryRequest(BaseModel):
@@ -56,6 +74,7 @@ class QueryRequest(BaseModel):
 
 class QueryResponse(BaseModel):
     conversation: ConversationSummary
+    interaction: InteractionResponse
     user_message: MessageResponse
     assistant_message: MessageResponse
     pipeline: dict[str, Any]

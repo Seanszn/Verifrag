@@ -54,6 +54,7 @@ def login(
     user = {
         "id": user_row["id"],
         "username": user_row["username"],
+        "email": user_row["email"],
         "created_at": user_row["created_at"],
     }
     token = db.create_session(user["id"])

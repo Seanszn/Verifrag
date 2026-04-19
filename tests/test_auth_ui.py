@@ -182,6 +182,7 @@ def test_query_and_history_are_loaded_from_backend(backend_stub: BackendStub):
                 {
                     "id": 31,
                     "conversation_id": 11,
+                    "interaction_id": 71,
                     "role": "user",
                     "content": "Explain Miranda warnings",
                     "created_at": "2026-04-14T12:05:01+00:00",
@@ -190,11 +191,63 @@ def test_query_and_history_are_loaded_from_backend(backend_stub: BackendStub):
                 {
                     "id": 32,
                     "conversation_id": 11,
+                    "interaction_id": 71,
                     "role": "assistant",
                     "content": "The court held that Miranda warnings are required.",
                     "created_at": "2026-04-14T12:05:04+00:00",
                     "metadata_json": "{\"claim_count\":1}",
                 },
+            ],
+        ),
+    )
+    backend_stub.queue(
+        "GET",
+        "/api/conversations/11/interactions",
+        FakeResponse(
+            200,
+            [
+                {
+                    "interaction": {
+                        "id": 71,
+                        "conversation_id": 11,
+                        "query": "Explain Miranda warnings",
+                        "response": "The court held that Miranda warnings are required.",
+                        "created_at": "2026-04-14T12:05:04+00:00",
+                    },
+                    "claims": [
+                        {
+                            "claim_id": "claim-1",
+                            "text": "Miranda warnings are required.",
+                            "verification": {
+                                "verdict": "SUPPORTED",
+                                "best_supporting_chunk": {
+                                    "id": "chunk_miranda",
+                                    "doc_id": "doc_miranda",
+                                    "case_name": "Miranda v. Arizona",
+                                    "citation": "384 U.S. 436",
+                                    "court": "scotus",
+                                    "court_level": "scotus",
+                                    "doc_type": "case",
+                                    "text_preview": "Miranda requires warnings.",
+                                },
+                                "best_supporting_score": 0.92,
+                                "best_contradicting_chunk": {
+                                    "id": "chunk_example",
+                                    "doc_id": "doc_example",
+                                    "case_name": "United States v. Example",
+                                    "citation": "123 Example 456",
+                                    "court": "dcd",
+                                    "court_level": "district",
+                                    "doc_type": "case",
+                                    "text_preview": "Example discusses an exception.",
+                                },
+                                "best_contradiction_score": 0.14,
+                            },
+                        }
+                    ],
+                    "citations": [],
+                    "contradictions": [],
+                }
             ],
         ),
     )
@@ -211,10 +264,17 @@ def test_query_and_history_are_loaded_from_backend(backend_stub: BackendStub):
     assert at.session_state["conversation_messages"][1]["content"] == (
         "The court held that Miranda warnings are required."
     )
+    assert at.session_state["conversation_messages"][1]["claim_evaluations"][0]["verification"]["verdict"] == (
+        "SUPPORTED"
+    )
+    assert at.session_state["conversation_messages"][1]["claim_case_analysis"]["top_supporting_cases"][0][
+        "citation"
+    ] == "384 U.S. 436"
     assert [call["path"] for call in backend_stub.calls] == [
         "/api/auth/login",
         "/api/conversations",
         "/api/conversations/11/messages",
+        "/api/conversations/11/interactions",
     ]
 
 
@@ -244,9 +304,17 @@ def test_submit_query_uses_backend_response_instead_of_placeholder(backend_stub:
                     "created_at": "2026-04-14T12:10:00+00:00",
                     "updated_at": "2026-04-14T12:10:02+00:00",
                 },
+                "interaction": {
+                    "id": 81,
+                    "conversation_id": 21,
+                    "query": "Explain Miranda warnings",
+                    "response": "The court held that Miranda warnings are required.",
+                    "created_at": "2026-04-14T12:10:02+00:00",
+                },
                 "user_message": {
                     "id": 41,
                     "conversation_id": 21,
+                    "interaction_id": 81,
                     "role": "user",
                     "content": "Explain Miranda warnings",
                     "created_at": "2026-04-14T12:10:01+00:00",
@@ -255,6 +323,7 @@ def test_submit_query_uses_backend_response_instead_of_placeholder(backend_stub:
                 "assistant_message": {
                     "id": 42,
                     "conversation_id": 21,
+                    "interaction_id": 81,
                     "role": "assistant",
                     "content": "The court held that Miranda warnings are required.",
                     "created_at": "2026-04-14T12:10:02+00:00",
@@ -265,6 +334,37 @@ def test_submit_query_uses_backend_response_instead_of_placeholder(backend_stub:
                     "retrieval_backend_status": "unavailable:no_indices",
                     "verification_backend_status": "skipped:no_retriever",
                     "claim_count": 1,
+                    "claims": [
+                        {
+                            "claim_id": "claim-1",
+                            "text": "Miranda warnings are required.",
+                            "verification": {
+                                "verdict": "NO_EVIDENCE",
+                                "best_supporting_chunk": {
+                                    "id": "chunk_miranda",
+                                    "doc_id": "doc_miranda",
+                                    "case_name": "Miranda v. Arizona",
+                                    "citation": "384 U.S. 436",
+                                    "court": "scotus",
+                                    "court_level": "scotus",
+                                    "doc_type": "case",
+                                    "text_preview": "Miranda requires warnings.",
+                                },
+                                "best_supporting_score": 0.0,
+                                "best_contradicting_chunk": {
+                                    "id": "chunk_example",
+                                    "doc_id": "doc_example",
+                                    "case_name": "United States v. Example",
+                                    "citation": "123 Example 456",
+                                    "court": "dcd",
+                                    "court_level": "district",
+                                    "doc_type": "case",
+                                    "text_preview": "Example discusses an exception.",
+                                },
+                                "best_contradiction_score": 0.08,
+                            },
+                        }
+                    ],
                 },
             },
         ),
@@ -286,6 +386,10 @@ def test_submit_query_uses_backend_response_instead_of_placeholder(backend_stub:
     assert at.session_state["last_pipeline"]["claim_count"] == 1
     assert at.session_state["current_query"] == ""
     assert at.session_state["page"] == "response"
+    assert at.session_state["conversation_messages"][1]["claim_evaluations"][0]["claim_id"] == "claim-1"
+    assert at.session_state["conversation_messages"][1]["claim_case_analysis"]["top_contradicting_cases"][0][
+        "citation"
+    ] == "123 Example 456"
     assert "Placeholder response" not in at.session_state["conversation_messages"][1]["content"]
 
 
@@ -326,6 +430,7 @@ def test_submit_query_appends_to_active_conversation_without_history_reload(back
                 {
                     "id": 51,
                     "conversation_id": 33,
+                    "interaction_id": 91,
                     "role": "user",
                     "content": "Explain Miranda warnings.",
                     "created_at": "2026-04-14T12:00:01+00:00",
@@ -334,11 +439,52 @@ def test_submit_query_appends_to_active_conversation_without_history_reload(back
                 {
                     "id": 52,
                     "conversation_id": 33,
+                    "interaction_id": 91,
                     "role": "assistant",
                     "content": "Miranda requires warnings during custodial interrogation.",
                     "created_at": "2026-04-14T12:00:03+00:00",
                     "metadata_json": "{\"claim_count\":1}",
                 },
+            ],
+        ),
+    )
+    backend_stub.queue(
+        "GET",
+        "/api/conversations/33/interactions",
+        FakeResponse(
+            200,
+            [
+                {
+                    "interaction": {
+                        "id": 91,
+                        "conversation_id": 33,
+                        "query": "Explain Miranda warnings.",
+                        "response": "Miranda requires warnings during custodial interrogation.",
+                        "created_at": "2026-04-14T12:00:03+00:00",
+                    },
+                    "claims": [
+                        {
+                            "claim_id": "claim-1",
+                            "text": "Miranda requires warnings during custodial interrogation.",
+                            "verification": {
+                                "verdict": "SUPPORTED",
+                                "best_supporting_chunk": {
+                                    "id": "chunk_miranda",
+                                    "doc_id": "doc_miranda",
+                                    "case_name": "Miranda v. Arizona",
+                                    "citation": "384 U.S. 436",
+                                    "court": "scotus",
+                                    "court_level": "scotus",
+                                    "doc_type": "case",
+                                    "text_preview": "Miranda requires warnings.",
+                                },
+                                "best_supporting_score": 0.94,
+                            },
+                        }
+                    ],
+                    "citations": [],
+                    "contradictions": [],
+                }
             ],
         ),
     )
@@ -355,9 +501,17 @@ def test_submit_query_appends_to_active_conversation_without_history_reload(back
                     "created_at": "2026-04-14T12:00:00+00:00",
                     "updated_at": "2026-04-14T12:06:30+00:00",
                 },
+                "interaction": {
+                    "id": 92,
+                    "conversation_id": 33,
+                    "query": "What about the public safety exception?",
+                    "response": "The public safety exception can permit limited unwarned questioning.",
+                    "created_at": "2026-04-14T12:06:30+00:00",
+                },
                 "user_message": {
                     "id": 53,
                     "conversation_id": 33,
+                    "interaction_id": 92,
                     "role": "user",
                     "content": "What about the public safety exception?",
                     "created_at": "2026-04-14T12:06:00+00:00",
@@ -366,6 +520,7 @@ def test_submit_query_appends_to_active_conversation_without_history_reload(back
                 "assistant_message": {
                     "id": 54,
                     "conversation_id": 33,
+                    "interaction_id": 92,
                     "role": "assistant",
                     "content": "The public safety exception can permit limited unwarned questioning.",
                     "created_at": "2026-04-14T12:06:30+00:00",
@@ -377,6 +532,37 @@ def test_submit_query_appends_to_active_conversation_without_history_reload(back
                     "verification_backend_status": "skipped:no_retriever",
                     "claim_count": 1,
                     "conversation_context_message_count": 2,
+                    "claims": [
+                        {
+                            "claim_id": "claim-2",
+                            "text": "The public safety exception can permit limited unwarned questioning.",
+                            "verification": {
+                                "verdict": "POSSIBLE_SUPPORT",
+                                "best_supporting_chunk": {
+                                    "id": "chunk_quarles",
+                                    "doc_id": "doc_quarles",
+                                    "case_name": "New York v. Quarles",
+                                    "citation": "467 U.S. 649",
+                                    "court": "scotus",
+                                    "court_level": "scotus",
+                                    "doc_type": "case",
+                                    "text_preview": "Quarles recognizes a public safety exception.",
+                                },
+                                "best_supporting_score": 0.62,
+                                "best_contradicting_chunk": {
+                                    "id": "chunk_example_2",
+                                    "doc_id": "doc_example_2",
+                                    "case_name": "State v. Example",
+                                    "citation": "456 Example 789",
+                                    "court": "state",
+                                    "court_level": "state_supreme",
+                                    "doc_type": "case",
+                                    "text_preview": "Example narrows the exception.",
+                                },
+                                "best_contradiction_score": 0.21,
+                            },
+                        }
+                    ],
                 },
             },
         ),
@@ -397,9 +583,13 @@ def test_submit_query_appends_to_active_conversation_without_history_reload(back
         "The public safety exception can permit limited unwarned questioning."
     )
     assert at.session_state["last_pipeline"]["conversation_context_message_count"] == 2
+    assert at.session_state["conversation_messages"][3]["claim_case_analysis"]["top_supporting_cases"][0][
+        "citation"
+    ] == "467 U.S. 649"
     assert [call["path"] for call in backend_stub.calls] == [
         "/api/auth/login",
         "/api/conversations",
         "/api/conversations/33/messages",
+        "/api/conversations/33/interactions",
         "/api/query",
     ]
