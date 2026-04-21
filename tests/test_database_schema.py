@@ -90,8 +90,9 @@ def test_initialize_migrates_legacy_schema_to_add_erd_style_tables(tmp_path: Pat
         assert "interaction_id" in message_columns
 
         state_row = migrated.execute(
-            "SELECT conversation_id, summary FROM conversation_state WHERE conversation_id = 1"
+            "SELECT conversation_id, summary, state_json FROM conversation_state WHERE conversation_id = 1"
         ).fetchone()
         assert state_row is not None
         assert state_row["conversation_id"] == 1
         assert state_row["summary"] is None
+        assert state_row["state_json"] is None

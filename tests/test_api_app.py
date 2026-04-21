@@ -28,9 +28,18 @@ class _StubLLM:
         _ = conversation_history
         return "Miranda warnings are required before custodial interrogation."
 
-    def generate_with_context(self, query: str, context, max_tokens=None, *, conversation_history=None) -> str:
+    def generate_with_context(
+        self,
+        query: str,
+        context,
+        max_tokens=None,
+        *,
+        conversation_history=None,
+        case_posture=None,
+        response_depth="concise",
+    ) -> str:
         assert query == "Explain Miranda warnings"
-        _ = context, max_tokens, conversation_history
+        _ = context, max_tokens, conversation_history, case_posture, response_depth
         return "Miranda warnings are required before custodial interrogation."
 
 
@@ -71,10 +80,11 @@ def test_register_query_and_history(monkeypatch, tmp_path: Path):
 
         query = client.post(
             "/api/query",
-            headers=_auth_headers(token),
+            headers={**_auth_headers(token), "X-Request-ID": "test-request-id"},
             json={"query": "Explain Miranda warnings"},
         )
         assert query.status_code == 200
+        assert query.headers["X-Request-ID"] == "test-request-id"
         payload = query.json()
         assert payload["conversation"]["title"] == "Explain Miranda warnings"
         assert payload["interaction"]["query"] == "Explain Miranda warnings"
@@ -82,7 +92,10 @@ def test_register_query_and_history(monkeypatch, tmp_path: Path):
         assert payload["assistant_message"]["role"] == "assistant"
         assert payload["user_message"]["interaction_id"] == payload["interaction"]["id"]
         assert payload["assistant_message"]["interaction_id"] == payload["interaction"]["id"]
+        assert payload["pipeline"]["request_id"] == "test-request-id"
         assert payload["pipeline"]["claim_count"] >= 1
+        assert payload["pipeline"]["claims"][0]["annotation"]["support_level"] == "unsupported"
+        assert payload["pipeline"]["claims"][0]["annotation"]["response_span"]["text"]
         assert json.loads(payload["assistant_message"]["metadata_json"])["claim_count"] >= 1
 
         conversation_id = payload["conversation"]["id"]
@@ -115,6 +128,7 @@ def test_register_query_and_history(monkeypatch, tmp_path: Path):
         assert interaction_items[0]["interaction"]["id"] == payload["interaction"]["id"]
         assert len(interaction_items[0]["claims"]) >= 1
         assert interaction_items[0]["claims"][0]["linked_citations"] == []
+        assert interaction_items[0]["claims"][0]["annotation"]["support_level"] == "unsupported"
         assert interaction_items[0]["citations"] == []
         assert interaction_items[0]["claim_citation_links"] == []
 

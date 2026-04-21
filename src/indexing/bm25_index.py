@@ -114,6 +114,10 @@ class BM25Index:
         results.sort(key=lambda item: (-item[1], item[0]))
         return results[:k]
 
+    def chunks(self) -> list[LegalChunk]:
+        """Return indexed chunks reconstructed from stored metadata."""
+        return [self._chunk_from_dict(row) for row in self._metadatas]
+
     def save(self) -> None:
         if self.index_path is None:
             raise ValueError("index_path is required to save BM25Index")

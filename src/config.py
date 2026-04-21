@@ -18,14 +18,15 @@ except ImportError:
         return False
 
 
-load_dotenv()
-
-
 def env_flag(name: str, default: bool) -> bool:
     raw_value = os.getenv(name)
     if raw_value is None:
         return default
     return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def huggingface_local_only_default() -> bool:
+    return env_flag("HF_LOCAL_FILES_ONLY", False) or env_flag("HF_HUB_OFFLINE", False) or env_flag("TRANSFORMERS_OFFLINE", False)
 
 # ============== PATHS ==============
 
@@ -35,6 +36,8 @@ RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 INDEX_DIR = DATA_DIR / "index"
 EVAL_DIR = DATA_DIR / "eval"
+
+load_dotenv(PROJECT_ROOT / ".env")
 
 # ============== DEPLOYMENT MODES ==============
 
@@ -59,10 +62,22 @@ class LLMConfig:
     provider: LLMProvider = field(
         default_factory=lambda: LLMProvider(os.getenv("LLM_PROVIDER", "ollama"))
     )
-    model: str = os.getenv("LLM_MODEL", "llama3.1:8b")
+    model: str = os.getenv("LLM_MODEL", "llama3.2:3b")
     host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     temperature: float = 0.1
-    max_tokens: int = 2048
+    max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "1024"))
+    request_timeout_seconds: int = int(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "150"))
+    num_ctx: int | None = int(os.getenv("OLLAMA_NUM_CTX", "4096"))
+    num_batch: int | None = (
+        int(os.getenv("OLLAMA_NUM_BATCH"))
+        if os.getenv("OLLAMA_NUM_BATCH")
+        else None
+    )
+    num_gpu: int | None = (
+        int(os.getenv("OLLAMA_NUM_GPU"))
+        if os.getenv("OLLAMA_NUM_GPU")
+        else None
+    )
 
 
 @dataclass
@@ -73,6 +88,17 @@ class APIConfig:
     port: int = int(os.getenv("API_PORT", "8000"))
     token_ttl_hours: int = int(os.getenv("AUTH_TOKEN_TTL_HOURS", "24"))
     client_api_base_url: str = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+    connect_timeout_seconds: int = int(os.getenv("API_CONNECT_TIMEOUT_SECONDS", "10"))
+    request_timeout_seconds: int = int(os.getenv("API_REQUEST_TIMEOUT_SECONDS", "30"))
+    query_timeout_seconds: int = int(os.getenv("API_QUERY_TIMEOUT_SECONDS", "180"))
+
+
+@dataclass
+class LoggingConfig:
+    """Backend application logging configuration."""
+
+    level: str = os.getenv("APP_LOG_LEVEL", "INFO")
+    slow_request_threshold_ms: int = int(os.getenv("APP_SLOW_REQUEST_THRESHOLD_MS", "2000"))
 
 
 @dataclass
@@ -100,9 +126,15 @@ class VectorStoreConfig:
 class ModelConfig:
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_dim: int = 384
-    nli_model: str = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
+    nli_model: str = os.getenv("NLI_MODEL", "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli")
+    nli_device: Optional[str] = (
+        os.getenv("NLI_DEVICE").strip().lower()
+        if os.getenv("NLI_DEVICE")
+        else None
+    )
     nli_labels: List[str] = field(default_factory=lambda: ["contradiction", "neutral", "entailment"])
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    huggingface_local_files_only: bool = field(default_factory=huggingface_local_only_default)
 
 # ============== RETRIEVAL ==============
 
@@ -113,7 +145,7 @@ class RetrievalConfig:
     chunk_overlap: int = 64
     dense_k: int = 20
     sparse_k: int = 20
-    rerank_k: int = 10
+    rerank_k: int = int(os.getenv("RETRIEVAL_RERANK_K", "8"))
     rrf_k: int = 60
 
 # ============== VERIFICATION ==============
@@ -122,6 +154,8 @@ class RetrievalConfig:
 @dataclass
 class VerificationConfig:
     enabled: bool = env_flag("ENABLE_VERIFICATION", True)
+    verifier_mode: str = os.getenv("VERIFICATION_VERIFIER_MODE", "live").strip().lower()
+    fallback_to_heuristic_on_error: bool = env_flag("VERIFICATION_FALLBACK_TO_HEURISTIC", False)
     agg_alpha: float = 0.35
     agg_beta: float = 0.20
     agg_gamma: float = 0.30
@@ -174,13 +208,16 @@ class DataConfig:
 # ============== COST TRACKING ==============
 
 LLM_PRICING = {
+    "deepseek-r1:7b": {"input": 0.0, "output": 0.0},
     "llama3.1:8b": {"input": 0.0, "output": 0.0},
+    "llama3.2:3b": {"input": 0.0, "output": 0.0},
 }
 
 # ============== INSTANCES ==============
 
 LLM = LLMConfig()
 API = APIConfig()
+LOGGING = LoggingConfig()
 DATABASE = DatabaseConfig()
 VECTOR_STORE = VectorStoreConfig()
 MODELS = ModelConfig()

@@ -22,8 +22,17 @@ from scripts.nli_test_utils import (  # noqa: E402
 )
 from src.config import VERIFICATION  # noqa: E402
 from src.pipeline import QueryPipeline  # noqa: E402
-from src.retrieval.case_targeting import canonical_doc_family_key  # noqa: E402
 from src.storage.database import Database  # noqa: E402
+
+try:  # noqa: E402
+    from src.retrieval.case_targeting import canonical_doc_family_key as _canonical_doc_family_key  # type: ignore
+except ImportError:  # pragma: no cover - compatibility with trimmed retrieval module set
+    from src.pipeline import _case_family_key as _canonical_doc_family_key  # type: ignore
+
+
+def canonical_doc_family_key(*, case_name=None, date_decided=None, doc_id=None, citation=None, **_ignored):
+    _ = date_decided, doc_id, citation, _ignored
+    return _canonical_doc_family_key(case_name or "")
 
 
 DEFAULT_SOURCE_REPORT = PROJECT_ROOT / "artifacts" / "test_reports" / "claim_verification_50_query_batch.json"
@@ -35,12 +44,23 @@ class FixedResponseLLM:
     def __init__(self, response: str) -> None:
         self.response = response
 
-    def generate_legal_answer(self, query: str) -> str:
+    def generate_legal_answer(self, query: str, **kwargs) -> str:
         _ = query
+        _ = kwargs
         return self.response
 
-    def generate_with_context(self, query: str, context, max_tokens=None) -> str:
-        _ = query, context, max_tokens
+    def generate_with_context(
+        self,
+        query: str,
+        context,
+        max_tokens=None,
+        *,
+        conversation_history=None,
+        case_posture=None,
+        response_depth=None,
+        **kwargs,
+    ) -> str:
+        _ = query, context, max_tokens, conversation_history, case_posture, response_depth, kwargs
         return self.response
 
 
@@ -95,7 +115,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    source_payload = json.loads(args.source_report.read_text(encoding="utf-8"))
+    source_report = args.source_report.resolve()
+    output_path = args.output.resolve()
+    stats_md = args.stats_md.resolve() if args.stats_md is not None else None
+
+    source_payload = json.loads(source_report.read_text(encoding="utf-8"))
     source_entries = list(_iter_source_entries(source_payload))[: args.limit]
 
     results: list[dict[str, Any]] = []
@@ -134,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
 
     summary = _build_summary(
-        source_report=args.source_report,
+        source_report=source_report,
         results=results,
         failures=failures,
         requested_count=len(source_entries),
@@ -147,11 +171,11 @@ def main(argv: list[str] | None = None) -> int:
         "failures": failures,
         "results": results,
     }
-    dump_json(payload, output_path=args.output)
+    dump_json(payload, output_path=output_path)
 
-    if args.stats_md is not None:
-        args.stats_md.parent.mkdir(parents=True, exist_ok=True)
-        args.stats_md.write_text(_render_stats_markdown(payload, args.output), encoding="utf-8")
+    if stats_md is not None:
+        stats_md.parent.mkdir(parents=True, exist_ok=True)
+        stats_md.write_text(_render_stats_markdown(payload, output_path), encoding="utf-8")
 
     print(dump_json(summary))
     return 0

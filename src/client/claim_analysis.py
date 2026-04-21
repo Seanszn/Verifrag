@@ -19,7 +19,13 @@ def find_cases_for_claim(claim: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(verification, dict):
         verification = {}
 
+    annotation = claim.get("annotation") if isinstance(claim, dict) else None
+    if not isinstance(annotation, dict):
+        annotation = {}
+
     linked_citations = claim.get("linked_citations") if isinstance(claim, dict) else None
+    if not isinstance(linked_citations, list):
+        linked_citations = annotation.get("evidence")
     if isinstance(linked_citations, list):
         supporting_case = _select_linked_case(linked_citations, relationship="supporting")
         contradicting_case = _select_linked_case(linked_citations, relationship="contradicting")
@@ -44,6 +50,8 @@ def find_cases_for_claim(claim: dict[str, Any]) -> dict[str, Any]:
         "claim_id": claim.get("claim_id"),
         "claim_text": claim.get("text") or claim.get("claim_text"),
         "verdict": verification.get("verdict"),
+        "support_level": annotation.get("support_level"),
+        "support_explanation": annotation.get("explanation"),
         "supporting_case": supporting_case,
         "contradicting_case": contradicting_case,
     }

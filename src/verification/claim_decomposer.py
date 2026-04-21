@@ -33,6 +33,12 @@ _CLAIM_MARKDOWN_HEADING_RE = re.compile(
     re.IGNORECASE,
 )
 _CLAIM_BULLET_PREFIX_RE = re.compile(r"^(?:[-*]\s+)+")
+_CLAIM_LABEL_LEAD_IN_RE = re.compile(
+    r"^(?:(?:the\s+)?(?:holding|rule|legal\s+rule|core\s+holding)"
+    r"(?:\s+in\s+[^:\n]{1,160})?\s+(?:is|was)\s*:|"
+    r"(?:bottom\s+line|practical\s+takeaway|takeaway|practical\s+rule)\s*:)\s*",
+    re.IGNORECASE,
+)
 _CLAIM_CONTEXT_CITATION_RE = re.compile(r"\s*\[\d+(?:\s*[-,]\s*\d+)*\]")
 _CLAIM_MARKDOWN_EMPHASIS_RE = re.compile(r"\*{1,2}([^*]+?)\*{1,2}")
 _HEDGE_RE = re.compile(
@@ -441,6 +447,7 @@ def _clean_claim_text(text: str) -> str:
         cleaned = _CLAIM_CITATION_PREFIX_RE.sub("", cleaned).strip()
         cleaned = _CLAIM_MARKDOWN_HEADING_RE.sub("", cleaned).strip()
         cleaned = _CLAIM_BULLET_PREFIX_RE.sub("", cleaned).strip()
+        cleaned = _CLAIM_LABEL_LEAD_IN_RE.sub("", cleaned).strip()
         cleaned = _CLAIM_CONTEXT_CITATION_RE.sub("", cleaned).strip()
         cleaned = _CLAIM_MARKDOWN_EMPHASIS_RE.sub(r"\1", cleaned).strip()
     return cleaned

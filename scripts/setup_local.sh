@@ -50,7 +50,7 @@ text = env_path.read_text(encoding="utf-8")
 lines = text.splitlines()
 updates = {
     "DEPLOYMENT_MODE": "local",
-    "ENABLE_VERIFICATION": "false",
+    "ENABLE_VERIFICATION": "true",
 }
 remove_keys = {"LLM_PROVIDER", "VECTOR_STORE"}
 
@@ -80,14 +80,14 @@ mkdir -p data/raw data/processed data/index data/eval
 
 if [[ "${SKIP_OLLAMA_PULL}" != "1" ]]; then
   if command -v ollama >/dev/null 2>&1; then
-    echo "Pulling Ollama model: llama3.1:8b"
-    ollama pull llama3.1:8b
-  else
-    echo "Warning: ollama not found. Install Ollama and run: ollama pull llama3.1:8b" >&2
-  fi
+    echo "Pulling Ollama model: llama3.2:3b"
+    ollama pull llama3.2:3b
+else
+    echo "Warning: ollama not found. Install Ollama and run: ollama pull llama3.2:3b" >&2
+fi
 fi
 
 echo
 echo "Local setup complete."
-echo "Verification is disabled by default for faster query-generation tests."
+echo "Verification is enabled by default for the full claim analysis pipeline."
 echo "Run: ./scripts/run_local.sh"
