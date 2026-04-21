@@ -80,6 +80,28 @@ def test_decompose_document_omits_markdown_and_context_prefixes_from_claims():
     assert all("[2]" not in text for text in claim_texts)
 
 
+def test_decompose_document_strips_label_lead_in_before_claim():
+    text = (
+        "The holding in Esteras v. United States is:\n"
+        "District courts cannot consider § 3553(a)(2)(A) when revoking supervised release."
+    )
+
+    claims = decompose_document(text)
+    claim_texts = [claim.text for claim in claims]
+
+    assert "District courts cannot consider § 3553(a)(2)(A) when revoking supervised release." in claim_texts
+    assert all("The holding in Esteras v. United States is" not in text for text in claim_texts)
+
+
+def test_decompose_document_does_not_strip_substantive_rule_sentence():
+    text = "The rule prohibiting consideration of § 3553(a)(2)(A) is unworkable if applied literally."
+
+    claims = decompose_document(text)
+    claim_texts = [claim.text for claim in claims]
+
+    assert "The rule prohibiting consideration of § 3553(a)(2)(A) is unworkable if applied literally." in claim_texts
+
+
 def test_corpus_builder_record_format_is_accepted():
     # Mirrors fields saved by CorpusBuilder._append_to_jsonl.
     record = {

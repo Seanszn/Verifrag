@@ -4,7 +4,10 @@ Algorithm 1: Batched NLI + aggregation for claim verification.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+import logging
+import time
 from typing import Dict, List, Optional, Protocol, Sequence, Tuple
 
 import numpy as np
@@ -12,6 +15,7 @@ import numpy as np
 from src.config import MODELS, VERIFICATION
 from src.ingestion.document import LegalChunk
 
+logger = logging.getLogger(__name__)
 
 class _HasText(Protocol):
     text: str
@@ -53,7 +57,7 @@ class NLIVerifier:
         max_length: int = 512,
     ) -> None:
         self.model_name = model_name or MODELS.nli_model
-        self.device = device
+        self.device = device or MODELS.nli_device
         self.batch_size = batch_size
         self.max_length = max_length
         self.label_map = {
@@ -71,6 +75,7 @@ class NLIVerifier:
         self._tokenizer = None
         self._model = None
         self._torch = None
+        self.local_files_only = MODELS.huggingface_local_files_only
 
     def verify_claim(
         self,
@@ -172,8 +177,20 @@ class NLIVerifier:
         """
         tokenizer, model, torch = self._load_model()
         results: List[Dict[str, float]] = []
+        total_batches = max(1, math.ceil(len(pairs) / self.batch_size))
+        started = time.perf_counter()
+        logger.info(
+            "verification.inference_start model=%s device=%s pairs=%s batches=%s batch_size=%s max_length=%s",
+            self.model_name,
+            self.device,
+            len(pairs),
+            total_batches,
+            self.batch_size,
+            self.max_length,
+        )
 
-        for start in range(0, len(pairs), self.batch_size):
+        for batch_index, start in enumerate(range(0, len(pairs), self.batch_size), start=1):
+            batch_started = time.perf_counter()
             batch = pairs[start : start + self.batch_size]
             premises = [premise for premise, _ in batch]
             hypotheses = [hypothesis for _, hypothesis in batch]
@@ -200,6 +217,23 @@ class NLIVerifier:
                         "entailment": float(row[self.label_map["entailment"]]),
                     }
                 )
+            logger.info(
+                "verification.inference_batch_complete model=%s batch=%s/%s batch_pairs=%s elapsed_ms=%.1f total_results=%s",
+                self.model_name,
+                batch_index,
+                total_batches,
+                len(batch),
+                (time.perf_counter() - batch_started) * 1000,
+                len(results),
+            )
+
+        logger.info(
+            "verification.inference_complete model=%s device=%s pairs=%s elapsed_ms=%.1f",
+            self.model_name,
+            self.device,
+            len(pairs),
+            (time.perf_counter() - started) * 1000,
+        )
 
         return results
 
@@ -213,13 +247,68 @@ class NLIVerifier:
 
         if self.device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self.device = self.device.lower().strip()
+            if self.device == "cuda" and not torch.cuda.is_available():
+                self.device = "cpu"
 
+        started = time.perf_counter()
+        logger.info(
+            "verification.model_load_start model=%s device=%s local_files_only=%s",
+            self.model_name,
+            self.device,
+            self.local_files_only,
+        )
         self._torch = torch
-        self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        self._model = AutoModelForSequenceClassification.from_pretrained(self.model_name)
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            self.model_name,
+            local_files_only=self.local_files_only,
+        )
+        self._model = AutoModelForSequenceClassification.from_pretrained(
+            self.model_name,
+            local_files_only=self.local_files_only,
+        )
+        self.label_map = self._resolve_label_map(self._model)
         self._model.to(self.device)
         self._model.eval()
+        logger.info(
+            "verification.model_load_complete model=%s device=%s local_files_only=%s elapsed_ms=%.1f",
+            self.model_name,
+            self.device,
+            self.local_files_only,
+            (time.perf_counter() - started) * 1000,
+        )
         return self._tokenizer, self._model, self._torch
+
+    @staticmethod
+    def _resolve_label_map(model) -> Dict[str, int]:
+        config = getattr(model, "config", None)
+        id2label = getattr(config, "id2label", None)
+        if not isinstance(id2label, dict):
+            return {
+                label: idx for idx, label in enumerate(MODELS.nli_labels)
+            }
+
+        normalized: Dict[str, int] = {}
+        for raw_idx, raw_label in id2label.items():
+            try:
+                idx = int(raw_idx)
+            except (TypeError, ValueError):
+                continue
+            label = str(raw_label).strip().lower()
+            if "contrad" in label:
+                normalized["contradiction"] = idx
+            elif "neutral" in label:
+                normalized["neutral"] = idx
+            elif "entail" in label:
+                normalized["entailment"] = idx
+
+        if set(normalized) == {"contradiction", "neutral", "entailment"}:
+            return normalized
+
+        return {
+            label: idx for idx, label in enumerate(MODELS.nli_labels)
+        }
 
     def _aggregate_scores(self, nli_scores: Sequence[NLIScore]) -> AggregatedScore:
         """Aggregate NLI scores across evidence with authority-aware weighting."""
@@ -253,7 +342,18 @@ class NLIVerifier:
         auth_contra = contradictions * authority_weights
         best_contra_idx = int(np.argmax(auth_contra))
         max_contra = float(np.max(auth_contra))
-        is_contradicted = max_contra > self.contradiction_threshold
+        best_entailment = float(entailments[best_idx])
+        best_contradiction = float(contradictions[best_contra_idx])
+        contradiction_margin = max_contra - max_pool
+        support_dominates_contradiction = (
+            best_entailment >= 0.90
+            and (support_ratio >= 0.35 or auth_weighted_entail >= 0.45)
+            and contradiction_margin < 0.10
+        )
+        is_contradicted = (
+            max_contra > self.contradiction_threshold
+            and not support_dominates_contradiction
+        )
         contra_penalty = max_contra if is_contradicted else 0.0
 
         raw_final = (
@@ -272,12 +372,14 @@ class NLIVerifier:
             support_ratio=support_ratio,
             component_scores={
                 "max_pool": max_pool,
-                "best_entailment": float(entailments[best_idx]),
+                "best_entailment": best_entailment,
                 "support_ratio": support_ratio,
                 "auth_weighted_entail": auth_weighted_entail,
                 "max_contradiction": max_contra,
-                "best_contradiction": float(contradictions[best_contra_idx]),
+                "best_contradiction": best_contradiction,
+                "contradiction_margin": contradiction_margin,
                 "contra_penalty": contra_penalty,
+                "support_dominates_contradiction": float(support_dominates_contradiction),
             },
             best_contradicting_chunk_idx=nli_scores[best_contra_idx].chunk_idx,
             best_contradicting_chunk=nli_scores[best_contra_idx].chunk,

@@ -15,6 +15,7 @@ from src.api.schemas import (
     MessageResponse,
 )
 from src.storage.database import Database
+from src.verification.claim_contract import normalize_claims_for_frontend
 
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
@@ -70,15 +71,19 @@ def list_interactions(
             _decode_claim_citation_link(link)
             for link in db.list_claim_citation_links(interaction["id"], current_user["id"])
         ]
+        normalized_claims, normalized_links = normalize_claims_for_frontend(
+            claims,
+            claim_citation_links=claim_citation_links,
+        )
         payloads.append(
             {
                 "interaction": interaction,
-                "claims": _attach_claim_citation_links(claims, claim_citation_links),
+                "claims": normalized_claims,
                 "citations": [
                     _decode_metadata_or_fallback(citation)
                     for citation in db.list_interaction_citations(interaction["id"], current_user["id"])
                 ],
-                "claim_citation_links": claim_citation_links,
+                "claim_citation_links": normalized_links,
                 "contradictions": [
                     _decode_metadata_or_fallback(contradiction)
                     for contradiction in db.list_contradictions(interaction["id"], current_user["id"])
@@ -141,25 +146,3 @@ def _decode_nested_metadata(metadata_json: Any, *, fallback: dict[str, Any]) -> 
         if isinstance(payload, dict):
             return payload
     return dict(fallback)
-
-
-def _attach_claim_citation_links(
-    claims: list[dict[str, Any]],
-    claim_citation_links: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    links_by_claim_id: dict[str, list[dict[str, Any]]] = {}
-    for link in claim_citation_links:
-        claim_id = link.get("claim_id")
-        if isinstance(claim_id, str) and claim_id:
-            links_by_claim_id.setdefault(claim_id, []).append(link)
-
-    enriched_claims: list[dict[str, Any]] = []
-    for claim in claims:
-        enriched_claim = dict(claim)
-        claim_id = enriched_claim.get("claim_id")
-        if isinstance(claim_id, str) and claim_id in links_by_claim_id:
-            enriched_claim["linked_citations"] = links_by_claim_id[claim_id]
-        else:
-            enriched_claim["linked_citations"] = []
-        enriched_claims.append(enriched_claim)
-    return enriched_claims

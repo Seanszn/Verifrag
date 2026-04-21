@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 import requests
 import streamlit as st
@@ -47,16 +48,37 @@ def api_request(
     headers = api_headers(include_content_type=include_content_type)
     extra_headers = kwargs.pop("headers", {})
     headers.update(extra_headers)
+    headers.setdefault("X-Request-ID", uuid4().hex)
+    timeout = kwargs.pop("timeout", _request_timeout(path))
 
     try:
-        response = requests.request(method, url, headers=headers, timeout=60, **kwargs)
+        response = requests.request(method, url, headers=headers, timeout=timeout, **kwargs)
+    except requests.Timeout as exc:  # pragma: no cover - exercised through UI behavior
+        raise APIError(_timeout_error_message(path, timeout)) from exc
+    except requests.ConnectionError as exc:  # pragma: no cover - exercised through UI behavior
+        raise APIError("Could not connect to the backend API.") from exc
     except requests.RequestException as exc:  # pragma: no cover - exercised through UI behavior
-        raise APIError("Could not reach the backend API.") from exc
+        raise APIError("The backend API request failed.") from exc
 
     if response.status_code == 401 and st.session_state.get("auth_token"):
         clear_auth()
 
     return response
+
+
+def _request_timeout(path: str) -> tuple[int, int]:
+    read_timeout = API.query_timeout_seconds if path == "/api/query" else API.request_timeout_seconds
+    return (API.connect_timeout_seconds, read_timeout)
+
+
+def _timeout_error_message(path: str, timeout: float | tuple[int, int]) -> str:
+    read_timeout = timeout[1] if isinstance(timeout, tuple) else timeout
+    if path == "/api/query":
+        return (
+            "The backend query timed out waiting for a response "
+            f"after {int(read_timeout)} seconds."
+        )
+    return f"The backend API timed out after {int(read_timeout)} seconds."
 
 
 def _extract_error_message(response: requests.Response) -> str | None:

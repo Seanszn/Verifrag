@@ -1,10 +1,11 @@
 import pytest
-from src.generation.ollama_backend import OllamaBackend
+import requests
+from src.config import LLM
+from src.generation.ollama_backend import OllamaBackend, OllamaBackendError
 
 ollama = pytest.importorskip("ollama")
 
-# Change this to whatever small model you have pulled locally (e.g., "llama3", "mistral", "phi3")
-TEST_MODEL = "llama3"
+TEST_MODEL = LLM.model
 
 def is_ollama_running():
     """Helper to check if Ollama daemon is active and model is present."""
@@ -23,8 +24,50 @@ def test_ollama_generation():
         response = backend.generate("Respond with exactly one word: Hello.", max_tokens=10)
         assert isinstance(response, str)
         assert len(response) > 0
-    except ollama.ResponseError:
+    except (ollama.ResponseError, OllamaBackendError) as exc:
+        if "not found" not in str(exc).lower():
+            raise
         pytest.skip(f"Model '{TEST_MODEL}' not found in local Ollama instance.")
+
+
+def test_ollama_backend_includes_configured_generation_options(monkeypatch):
+    """Ensure optional Ollama runtime limits are forwarded to the API."""
+
+    captured = {}
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"response": "ok"}
+
+    def _fake_post(url, json, timeout):
+        captured["url"] = url
+        captured["payload"] = json
+        captured["timeout"] = timeout
+        return _FakeResponse()
+
+    monkeypatch.setattr(requests, "post", _fake_post)
+
+    backend = OllamaBackend(
+        model_name="llama3.1:8b",
+        host="http://127.0.0.1:11434",
+        timeout=45,
+        num_ctx=512,
+        num_batch=16,
+        num_gpu=1,
+    )
+
+    response = backend.generate("Test prompt.", max_tokens=64)
+
+    assert response == "ok"
+    assert captured["url"] == "http://127.0.0.1:11434/api/generate"
+    assert captured["timeout"] == 45
+    assert captured["payload"]["options"]["num_predict"] == 64
+    assert captured["payload"]["options"]["num_ctx"] == 512
+    assert captured["payload"]["options"]["num_batch"] == 16
+    assert captured["payload"]["options"]["num_gpu"] == 1
 
 @pytest.mark.skipif(not is_ollama_running(), reason="Ollama daemon is not running.")
 def test_ollama_rag_context():
@@ -41,9 +84,12 @@ def test_ollama_rag_context():
         response = backend.generate_with_context(query, context)
         
         # The model should mention 5% based on the provided context
-        assert "5%" in response
+        response_lower = response.lower()
+        assert "5%" in response or "5 percent" in response_lower
         
-        # Based on your prompt rules, it should ideally cite [1] or [2]
-        assert "[" in response and "]" in response
-    except ollama.ResponseError:
+        # Current prompt rules require plain text rather than bracket citations.
+        assert "[" not in response and "]" not in response
+    except (ollama.ResponseError, OllamaBackendError) as exc:
+        if "not found" not in str(exc).lower():
+            raise
         pytest.skip(f"Model '{TEST_MODEL}' not found in local Ollama instance.")

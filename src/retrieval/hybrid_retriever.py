@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+import logging
 from typing import List, Sequence
 
 import numpy as np
@@ -12,6 +13,7 @@ from src.config import RETRIEVAL
 from src.indexing.embedder import Embedder
 from src.ingestion.document import LegalChunk
 
+logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class _SearchHit:
@@ -54,6 +56,8 @@ class HybridRetriever:
         self.dense_k = dense_k or RETRIEVAL.dense_k
         self.sparse_k = sparse_k or RETRIEVAL.sparse_k
         self.rrf_k = rrf_k or RETRIEVAL.rrf_k
+        self.last_dense_error: str | None = None
+        self.last_sparse_error: str | None = None
 
     def retrieve(
         self,
@@ -68,10 +72,38 @@ class HybridRetriever:
         if limit <= 0 or not query or not query.strip():
             return []
 
+        self.last_dense_error = None
+        self.last_sparse_error = None
         use_legacy_output = top_k is not None
         effective_rrf_k = int(rrf_k or self.rrf_k)
-        dense_hits = self._dense_search(query, limit if use_legacy_output else self.dense_k)
-        sparse_hits = self._sparse_search(query, limit if use_legacy_output else self.sparse_k)
+        try:
+            dense_hits = self._dense_search(query, limit if use_legacy_output else self.dense_k)
+        except Exception as exc:
+            self.last_dense_error = exc.__class__.__name__
+            logger.warning(
+                "retrieval.dense_fallback error=%s query=%r",
+                self.last_dense_error,
+                " ".join(query.split())[:80],
+            )
+            dense_hits = []
+
+        try:
+            sparse_hits = self._sparse_search(query, limit if use_legacy_output else self.sparse_k)
+        except Exception as exc:
+            self.last_sparse_error = exc.__class__.__name__
+            logger.warning(
+                "retrieval.sparse_error error=%s query=%r",
+                self.last_sparse_error,
+                " ".join(query.split())[:80],
+            )
+            sparse_hits = []
+
+        if self.last_dense_error and self.last_sparse_error:
+            raise RuntimeError(
+                "dense and sparse retrieval failed: "
+                f"dense={self.last_dense_error}; sparse={self.last_sparse_error}"
+            )
+
         fused = self._fuse_hits((dense_hits, sparse_hits), rrf_k=effective_rrf_k)
 
         if not fused:
@@ -82,6 +114,15 @@ class HybridRetriever:
         chunks = [candidate.chunk for candidate in fused]
         reranked = self._rerank(query, chunks)
         return reranked[:limit]
+
+    def last_backend_status(self) -> str:
+        if self.last_dense_error and self.last_sparse_error:
+            return f"error:dense:{self.last_dense_error};sparse:{self.last_sparse_error}"
+        if self.last_dense_error:
+            return f"warning:dense:{self.last_dense_error}"
+        if self.last_sparse_error:
+            return f"warning:sparse:{self.last_sparse_error}"
+        return "ok"
 
     def _dense_search(self, query: str, k: int) -> List[_SearchHit]:
         if self.vector_store is None or self.embedder is None:
@@ -116,8 +157,8 @@ class HybridRetriever:
                     )
                     candidates[hit.chunk_id] = candidate
                 else:
-                    for key, value in hit.metadata.items():
-                        candidate.metadata.setdefault(key, value)
+                    candidate.metadata = self._merge_metadata(candidate.metadata, hit.metadata)
+                    candidate.chunk = self._chunk_from_metadata(candidate.metadata)
                 candidate.rrf_score += 1.0 / (rrf_k + rank)
                 candidate.best_rank = min(candidate.best_rank, rank)
 
@@ -214,6 +255,23 @@ class HybridRetriever:
         if value is None:
             return None
         return np.asarray(value, dtype=np.float32)
+
+    @staticmethod
+    def _merge_metadata(existing: dict, incoming: dict) -> dict:
+        payload = dict(existing)
+        for key, value in incoming.items():
+            if key not in payload or HybridRetriever._is_blank_metadata_value(payload.get(key)):
+                if not HybridRetriever._is_blank_metadata_value(value):
+                    payload[key] = value
+        return payload
+
+    @staticmethod
+    def _is_blank_metadata_value(value) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return not value.strip()
+        return False
 
     @staticmethod
     def _legacy_results(candidates: Sequence[_FusedCandidate], limit: int) -> list[dict]:

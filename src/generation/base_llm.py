@@ -22,6 +22,8 @@ class BaseLLM(ABC):
         max_tokens: Optional[int] = None,
         *,
         conversation_history: list[dict[str, Any]] | None = None,
+        case_posture: dict[str, Any] | None = None,
+        response_depth: str = "concise",
     ) -> str:
         """Generate a response with retrieved context."""
         pass

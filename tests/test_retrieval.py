@@ -54,6 +54,12 @@ class _FakeReranker:
         return [self.score_map[chunk.id] for chunk in chunks]
 
 
+class _ExplodingEmbedder:
+    def encode(self, texts, batch_size=32, normalize=True):
+        _ = texts, batch_size, normalize
+        raise RuntimeError("dense model unavailable")
+
+
 def _chunk(chunk_id: str, text: str, idx: int) -> LegalChunk:
     return LegalChunk(
         id=chunk_id,
@@ -160,6 +166,36 @@ def test_hybrid_retriever_supports_legacy_top_k_dictionary_api():
     assert sparse_index.calls == [("Supreme Court family trust", 2)]
 
 
+def test_hybrid_retriever_backfills_missing_chunk_metadata_from_later_hits():
+    dense_metadata = {
+        "id": "burnett:0",
+        "doc_id": "cl_10805632",
+        "text": "Burnett dense chunk",
+        "chunk_index": 0,
+        "doc_type": "case",
+        "court_level": "scotus",
+    }
+    sparse_metadata = {
+        **dense_metadata,
+        "case_name": "Burnett v. United States",
+        "court": "scotus",
+        "citation": "607 U. S. ____ (2026)",
+    }
+
+    vector_store = _FakeVectorStore([("burnett:0", 0.95, dense_metadata)])
+    sparse_index = _FakeSparseIndex([("burnett:0", 12.0, sparse_metadata)])
+    embedder = _FakeEmbedder(np.array([1.0, 0.0, 0.0], dtype=np.float32))
+    retriever = HybridRetriever(embedder=embedder, vector_store=vector_store, bm25_index=sparse_index)
+
+    results = retriever.retrieve("Burnett query", k=1)
+
+    assert len(results) == 1
+    assert results[0].id == "burnett:0"
+    assert results[0].case_name == "Burnett v. United States"
+    assert results[0].court == "scotus"
+    assert results[0].citation == "607 U. S. ____ (2026)"
+
+
 def test_hybrid_retriever_reranker_can_override_fused_order():
     chunk_a = _chunk("a", "alpha", 0)
     chunk_b = _chunk("b", "beta", 1)
@@ -197,3 +233,22 @@ def test_hybrid_retriever_returns_empty_for_blank_query():
     assert retriever.retrieve("   ", k=5) == []
     assert vector_store.calls == []
     assert sparse_index.calls == []
+
+
+def test_hybrid_retriever_falls_back_to_sparse_when_dense_search_fails():
+    chunk_b = _chunk("b", "beta", 1)
+
+    vector_store = _FakeVectorStore([_hit(chunk_b, 0.95)])
+    sparse_index = _FakeSparseIndex([_hit(chunk_b, 12.0)])
+    retriever = HybridRetriever(
+        vector_store=vector_store,
+        bm25_index=sparse_index,
+        embedder=_ExplodingEmbedder(),
+    )
+
+    results = retriever.retrieve("warrant query", k=3)
+
+    assert [chunk.id for chunk in results] == ["b"]
+    assert vector_store.calls == []
+    assert sparse_index.calls == [("warrant query", 20)]
+    assert retriever.last_backend_status() == "warning:dense:RuntimeError"

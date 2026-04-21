@@ -69,6 +69,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS conversation_state (
                     conversation_id INTEGER PRIMARY KEY,
                     summary TEXT,
+                    state_json TEXT,
                     last_updated_at TEXT NOT NULL,
                     FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
                 );
@@ -202,6 +203,10 @@ class Database:
         message_columns = self._table_columns(conn, "messages")
         if "interaction_id" not in message_columns:
             conn.execute("ALTER TABLE messages ADD COLUMN interaction_id INTEGER")
+
+        state_columns = self._table_columns(conn, "conversation_state")
+        if state_columns and "state_json" not in state_columns:
+            conn.execute("ALTER TABLE conversation_state ADD COLUMN state_json TEXT")
 
         conn.execute(
             """
@@ -506,18 +511,57 @@ class Database:
             ).fetchone()
         return dict(updated)
 
-    def update_conversation_state(self, conversation_id: int, summary: str | None) -> None:
+    def get_conversation_state(
+        self,
+        conversation_id: int,
+        user_id: int,
+    ) -> Optional[dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT s.conversation_id, s.summary, s.state_json, s.last_updated_at
+                FROM conversation_state s
+                JOIN conversations c ON c.id = s.conversation_id
+                WHERE s.conversation_id = ? AND c.user_id = ?
+                """,
+                (conversation_id, user_id),
+            ).fetchone()
+        if row is None:
+            return None
+
+        state: dict[str, Any] = {}
+        raw_state = row["state_json"]
+        if raw_state:
+            try:
+                parsed = json.loads(raw_state)
+            except (TypeError, ValueError):
+                parsed = {}
+            if isinstance(parsed, dict):
+                state = parsed
+
+        payload = dict(row)
+        payload["state"] = state
+        return payload
+
+    def update_conversation_state(
+        self,
+        conversation_id: int,
+        summary: str | None,
+        state: dict[str, Any] | None = None,
+    ) -> None:
         updated_at = utc_now_iso()
+        state_json = json.dumps(state) if state is not None else None
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO conversation_state (conversation_id, summary, last_updated_at)
-                VALUES (?, ?, ?)
+                INSERT INTO conversation_state (conversation_id, summary, state_json, last_updated_at)
+                VALUES (?, ?, ?, ?)
                 ON CONFLICT(conversation_id) DO UPDATE
                 SET summary = excluded.summary,
+                    state_json = COALESCE(excluded.state_json, conversation_state.state_json),
                     last_updated_at = excluded.last_updated_at
                 """,
-                (conversation_id, summary, updated_at),
+                (conversation_id, summary, state_json, updated_at),
             )
             self._touch_conversation(conn, conversation_id, updated_at=updated_at)
 

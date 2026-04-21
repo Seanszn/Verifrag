@@ -1,9 +1,12 @@
 """Tests for local embedding wrapper."""
 
+import sys
+import types
+
 import numpy as np
 import pytest
 
-from src.config import MODELS
+from src import config as config_module
 from src.indexing.embedder import Embedder
 
 
@@ -31,5 +34,25 @@ def test_encode_empty_input_returns_empty_matrix_with_config_dim():
     embedder = Embedder()
     vectors = embedder.encode([], normalize=True)
 
-    assert vectors.shape == (0, MODELS.embedding_dim)
+    assert vectors.shape == (0, config_module.MODELS.embedding_dim)
     assert vectors.dtype == np.float32
+
+
+def test_load_model_forwards_local_files_only(monkeypatch):
+    captured = {}
+
+    class _FakeSentenceTransformer:
+        def __init__(self, model_name, *, local_files_only=False, **kwargs):
+            captured["model_name"] = model_name
+            captured["local_files_only"] = local_files_only
+            captured["kwargs"] = kwargs
+
+    fake_module = types.SimpleNamespace(SentenceTransformer=_FakeSentenceTransformer)
+    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
+    monkeypatch.setattr(config_module.MODELS, "huggingface_local_files_only", True)
+
+    embedder = Embedder()
+    embedder._load_model()
+
+    assert captured["model_name"] == config_module.MODELS.embedding_model
+    assert captured["local_files_only"] is True

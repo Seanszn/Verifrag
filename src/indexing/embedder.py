@@ -4,12 +4,15 @@ Embedder - sentence-transformers wrapper.
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import Iterable, Sequence
 
 import numpy as np
 
 from src.config import MODELS
 
+logger = logging.getLogger(__name__)
 
 class Embedder:
     """Simple local embedding wrapper around sentence-transformers."""
@@ -17,13 +20,29 @@ class Embedder:
     def __init__(self, model_name: str | None = None):
         self.model_name = model_name or MODELS.embedding_model
         self._model = None
+        self.local_files_only = MODELS.huggingface_local_files_only
 
     def _load_model(self):
         """Lazy-load to avoid model startup cost until embeddings are needed."""
         if self._model is None:
             from sentence_transformers import SentenceTransformer
 
-            self._model = SentenceTransformer(self.model_name)
+            started = time.perf_counter()
+            logger.info(
+                "retrieval.embedder_load_start model=%s local_files_only=%s",
+                self.model_name,
+                self.local_files_only,
+            )
+            self._model = SentenceTransformer(
+                self.model_name,
+                local_files_only=self.local_files_only,
+            )
+            logger.info(
+                "retrieval.embedder_load_complete model=%s local_files_only=%s elapsed_ms=%.1f",
+                self.model_name,
+                self.local_files_only,
+                (time.perf_counter() - started) * 1000,
+            )
         return self._model
 
     @staticmethod

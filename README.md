@@ -17,12 +17,17 @@ Commercial legal AI tools hallucinate at 17-33% rates (Stanford Law, 2024). They
 Local deployment is the default configuration:
 
 - `DEPLOYMENT_MODE=local`
-- `LLM_MODEL=llama3.1:8b`
+- `LLM_MODEL=llama3.2:3b`
 - `OLLAMA_HOST=http://localhost:11434`
+- `LLM_MAX_TOKENS=1024`
+- `LLM_REQUEST_TIMEOUT_SECONDS=150`
+- `OLLAMA_NUM_CTX=4096`
+- `API_QUERY_TIMEOUT_SECONDS=180`
+- `APP_LOG_LEVEL=INFO`
 - `CHROMA_PATH=data/index/chroma`
-- `ENABLE_VERIFICATION=false` for faster query-generation smoke tests
+- `ENABLE_VERIFICATION=true` for the full claim-analysis pipeline
 
-This is already the default in `.env.example` and `src/config.py`.
+This is already the default in `.env.example`, the local setup/run scripts, and `src/config.py`.
 
 ## Quick Start (Local Default)
 
@@ -53,7 +58,7 @@ chmod +x scripts/setup_local.sh scripts/run_api.sh scripts/run_local.sh
 - Create `.env` from `.env.example` if missing
 - Ensure `.env` defaults to local mode
 - Create local data directories (`data/raw`, `data/processed`, `data/index`, `data/eval`)
-- Optionally pull `llama3.1:8b` if `ollama` is installed
+- Optionally pull `llama3.2:3b` if `ollama` is installed
 
 ## Manual Setup (Equivalent)
 
@@ -73,14 +78,17 @@ python -m spacy download en_core_web_sm
 cp .env.example .env   # Windows PowerShell: Copy-Item .env.example .env
 
 # Install Ollama separately (https://ollama.com), then pull local model
-ollama pull llama3.1:8b
+ollama pull llama3.2:3b
 ```
 
 ## Configuration
 
 `.env.example` includes local API and UI defaults.
 
-For fast backend query testing, local setup disables claim verification by default. Set `ENABLE_VERIFICATION=true` when you want the full decomposition + NLI verification path again.
+Local setup now enables claim verification by default. Set `ENABLE_VERIFICATION=false` when you want faster generation-only smoke tests.
+The default query path now waits longer than standard API calls: regular API requests default to 30 seconds, `/api/query` defaults to 180 seconds, and Ollama generation defaults to 150 seconds.
+If local generation is still too slow, reduce `LLM_MAX_TOKENS` further or disable verification for smoke tests.
+Backend request logging is now correlated by `X-Request-ID`, includes per-request duration headers, and emits query stage logs for retrieval, generation, claim decomposition, and verification.
 
 ## Engineering Notes
 
@@ -105,7 +113,7 @@ python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
 streamlit run src/app.py
 ```
 
-In the local startup scripts, `/api/query` runs in generation-only mode by default, so responses return without claim decomposition or NLI verification.
+In the local startup scripts, `/api/query` runs with claim decomposition and NLI verification enabled by default.
 
 ## Weekly Corpus Updates (Incremental)
 

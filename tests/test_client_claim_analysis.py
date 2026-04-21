@@ -44,6 +44,32 @@ def test_find_cases_for_interaction_surfaces_top_support_and_contradiction():
                         },
                     },
                 ],
+                "annotation": {
+                    "support_level": "supported",
+                    "explanation": "Retrieved evidence supports the claim.",
+                    "response_span": {
+                        "doc_id": "assistant_response",
+                        "start_char": 0,
+                        "end_char": 30,
+                        "text": "Miranda warnings are required.",
+                    },
+                    "evidence": [
+                        {
+                            "relationship": "supporting",
+                            "score": 0.91,
+                            "citation": {
+                                "id": "chunk-miranda",
+                                "doc_id": "doc-miranda",
+                                "case_name": "Miranda v. Arizona",
+                                "citation": "384 U.S. 436",
+                                "court": "scotus",
+                                "court_level": "scotus",
+                                "doc_type": "case",
+                                "text_preview": "Miranda requires warnings.",
+                            },
+                        }
+                    ],
+                },
                 "verification": {
                     "verdict": "SUPPORTED",
                     "best_supporting_chunk": {
@@ -80,7 +106,51 @@ def test_find_cases_for_interaction_surfaces_top_support_and_contradiction():
 
     assert len(claims) == 1
     assert case_analysis["interaction_id"] == 12
+    assert case_analysis["claims"][0]["support_level"] == "supported"
     assert case_analysis["claims"][0]["supporting_case"]["citation"] == "384 U.S. 436"
     assert case_analysis["claims"][0]["contradicting_case"]["citation"] == "123 Example 456"
     assert case_analysis["top_supporting_cases"][0]["score"] == 0.91
     assert case_analysis["top_contradicting_cases"][0]["score"] == 0.27
+
+
+def test_find_cases_for_interaction_can_fall_back_to_annotation_evidence():
+    interaction_detail = {
+        "interaction": {"id": 44},
+        "claims": [
+            {
+                "claim_id": "claim-annotation",
+                "text": "The exception is narrow.",
+                "annotation": {
+                    "support_level": "possibly_supported",
+                    "explanation": "Retrieved evidence is directionally supportive but not decisive.",
+                    "response_span": {
+                        "doc_id": "assistant_response",
+                        "start_char": 10,
+                        "end_char": 34,
+                        "text": "The exception is narrow.",
+                    },
+                    "evidence": [
+                        {
+                            "relationship": "supporting",
+                            "score": 0.62,
+                            "citation": {
+                                "id": "chunk-quarles",
+                                "doc_id": "doc-quarles",
+                                "case_name": "New York v. Quarles",
+                                "citation": "467 U.S. 649",
+                                "court": "scotus",
+                                "court_level": "scotus",
+                                "doc_type": "case",
+                                "text_preview": "Quarles recognizes a narrow exception.",
+                            },
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+
+    case_analysis = find_cases_for_interaction(interaction_detail)
+
+    assert case_analysis["claims"][0]["support_level"] == "possibly_supported"
+    assert case_analysis["claims"][0]["supporting_case"]["citation"] == "467 U.S. 649"
