@@ -115,6 +115,25 @@ streamlit run src/app.py
 
 In the local startup scripts, `/api/query` runs with claim decomposition and NLI verification enabled by default.
 
+## Network Deployment
+
+For shared LAN or server deployment, use the consolidated guide:
+
+- [NETWORK_DEPLOYMENT.md](NETWORK_DEPLOYMENT.md)
+
+The default Docker stack runs:
+
+- FastAPI backend on container port `8000`
+- Streamlit client on container port `8501`
+- optional Ollama service with `docker compose --profile ollama`
+
+Basic server start:
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
 ## Weekly Corpus Updates (Incremental)
 
 Use the wrapper scripts below to run `scripts/download_corpus.py --update` on a schedule. They use the existing sync state to fetch only new/updated cases and write timestamped logs.

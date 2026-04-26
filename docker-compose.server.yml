@@ -3,20 +3,34 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.server
+    image: legalverifirag-api:latest
     container_name: legalverifirag-api
-    env_file:
-      - .env
     environment:
-      API_HOST: 0.0.0.0
-      API_PORT: 8000
+      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-local}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_MODEL: ${LLM_MODEL:-llama3.2:3b}
+      OLLAMA_HOST: ${DOCKER_OLLAMA_HOST:-http://host.docker.internal:11434}
+      API_HOST: "0.0.0.0"
+      API_PORT: "8000"
       DATABASE_PATH: /app/data/legalverifirag.db
       CHROMA_PATH: /app/data/index/chroma
-      OLLAMA_HOST: http://host.docker.internal:11434
+      ENABLE_VERIFICATION: ${ENABLE_VERIFICATION:-true}
+      VERIFICATION_FALLBACK_TO_HEURISTIC: ${VERIFICATION_FALLBACK_TO_HEURISTIC:-true}
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+      TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-0}
+      HF_LOCAL_FILES_ONLY: ${HF_LOCAL_FILES_ONLY:-0}
+      COURTLISTENER_TOKEN: ${COURTLISTENER_TOKEN:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "8000:8000"
+      - "${API_PUBLISHED_PORT:-8000}:8000"
     volumes:
       - ./data:/app/data
       - ./temp_uploads:/app/temp_uploads
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 45s
+      retries: 5
     restart: unless-stopped
