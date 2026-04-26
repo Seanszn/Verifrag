@@ -1,0 +1,173 @@
+{
+  "name": "rag_parameter_stress_set_2026-04-20",
+  "created_on": "2026-04-20",
+  "description": "A targeted live-system stress set that probes core RAG parameters for the current Supreme Court corpus-backed API: named-case targeting, posture handling, merits extraction, citation-style retrieval, issue-only retrieval, follow-up memory, and off-target refusal behavior.",
+  "items": [
+    {
+      "id": "rag_param_001",
+      "category": "named_case_posture",
+      "conversation_key": "burnett_thread",
+      "query": "In Burnett v. United States, what did the Supreme Court decide about Burnett and supervised release?",
+      "target_case": "Burnett v. United States",
+      "expect_case_filter": true,
+      "expected_posture": {
+        "decision_type": "cert_denial",
+        "court_action": "denied certiorari",
+        "opinion_role": "dissent_from_denial",
+        "author": "Gorsuch"
+      },
+      "required_groups": [
+        ["denied certiorari", "denied review", "denied the petition"],
+        ["gorsuch", "dissent"]
+      ],
+      "forbidden_terms": ["3553(a)(2)(A)", "esteras", "tariffs"]
+    },
+    {
+      "id": "rag_param_002",
+      "category": "follow_up_author_attribution",
+      "conversation_key": "burnett_thread",
+      "query": "Who wrote the separate opinion?",
+      "required_groups": [
+        ["gorsuch"]
+      ],
+      "forbidden_terms": ["esteras", "burgess", "learning resources"]
+    },
+    {
+      "id": "rag_param_003",
+      "category": "named_case_merits",
+      "conversation_key": "esteras_thread",
+      "query": "In Esteras v. United States, what did the Supreme Court decide about supervised release revocation factors?",
+      "target_case": "Esteras v. United States",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["3553(a)(2)(A)", "retribution"],
+        ["may not consider", "cannot consider", "must not consider", "not relevant"]
+      ],
+      "forbidden_terms": ["new trial", "newly discovered evidence", "burgess"]
+    },
+    {
+      "id": "rag_param_004",
+      "category": "follow_up_rule_application",
+      "conversation_key": "esteras_thread",
+      "query": "So could the judge use retribution when revoking supervised release?",
+      "required_groups": [
+        ["no", "cannot", "may not", "must not"],
+        ["retribution", "3553(a)(2)(A)"]
+      ],
+      "forbidden_terms": ["new trial", "newly discovered evidence", "burgess"]
+    },
+    {
+      "id": "rag_param_005",
+      "category": "named_case_merits",
+      "query": "In Learning Resources, Inc. v. Trump, what did the Supreme Court hold about whether IEEPA authorizes the President to impose tariffs?",
+      "target_case": "Learning Resources, Inc. v. Trump",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["ieepa"],
+        ["does not authorize", "did not authorize", "not authorize"],
+        ["tariffs"]
+      ],
+      "forbidden_terms": ["burnett", "supervised release", "3553(a)(2)(A)"]
+    },
+    {
+      "id": "rag_param_006",
+      "category": "named_case_merits",
+      "query": "In Urias-Orellana v. Bondi, what did the Supreme Court hold about the standard of review for the BIA's persecution determination on undisputed facts?",
+      "target_case": "Urias-Orellana v. Bondi",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["substantial evidence", "substantial-evidence"],
+        ["review", "standard"]
+      ],
+      "forbidden_terms": ["de novo review applies", "new trial", "burgess"]
+    },
+    {
+      "id": "rag_param_007",
+      "category": "named_case_merits",
+      "query": "In Hain Celestial Group, Inc. v. Palmquist, what did the Supreme Court hold about whether an erroneous post-removal dismissal cured the jurisdictional defect that existed at removal?",
+      "target_case": "Hain Celestial Group, Inc. v. Palmquist",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["did not cure", "did not fix", "did not eliminate"],
+        ["jurisdictional defect", "diversity jurisdiction", "defect at removal"],
+        ["vacated", "remanded"]
+      ],
+      "forbidden_terms": ["sixth circuit", "new trial", "burgess"]
+    },
+    {
+      "id": "rag_param_008",
+      "category": "named_case_yes_no",
+      "query": "Did Thompson v. United States hold that 18 U.S.C. 1014 criminalizes misleading but literally true statements?",
+      "target_case": "Thompson v. United States",
+      "expect_case_filter": false,
+      "required_groups": [
+        ["no", "did not"],
+        ["literally true", "misleading"],
+        ["1014", "18 u.s.c."]
+      ],
+      "forbidden_terms": ["yes", "criminalizes all misleading statements"]
+    },
+    {
+      "id": "rag_param_009",
+      "category": "named_case_merits",
+      "query": "In Galette v. New Jersey Transit Corp., what did the Supreme Court hold about whether NJ Transit is an arm of New Jersey for sovereign immunity purposes?",
+      "target_case": "Galette v. New Jersey Transit Corp.",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["not an arm of new jersey", "not an arm of the state", "not entitled to share in new jersey's immunity", "not entitled to sovereign immunity"],
+        ["nj transit"]
+      ],
+      "forbidden_terms": ["is an arm of new jersey", "burnett", "supervised release"]
+    },
+    {
+      "id": "rag_param_010",
+      "category": "citation_style_retrieval",
+      "query": "What did 604 U.S. 408 hold about misleading but literally true statements under 18 U.S.C. 1014?",
+      "required_groups": [
+        ["literally true", "misleading"],
+        ["1014", "18 u.s.c."],
+        ["not", "does not", "did not"]
+      ],
+      "forbidden_terms": ["burnett", "supervised release", "ieepa"]
+    },
+    {
+      "id": "rag_param_011",
+      "category": "short_name_case_reference",
+      "query": "What did Burnett say about whether supervised release can push prison time past the statutory maximum without a jury?",
+      "required_groups": [
+        ["denied certiorari", "denied review", "court denied"],
+        ["gorsuch", "dissent"]
+      ],
+      "forbidden_terms": ["3553(a)(2)(A)", "esteras", "tariffs"]
+    },
+    {
+      "id": "rag_param_012",
+      "category": "issue_only_retrieval",
+      "query": "What did the Supreme Court say about whether IEEPA lets the President impose tariffs?",
+      "required_groups": [
+        ["ieepa"],
+        ["does not authorize", "did not authorize", "not authorize"],
+        ["tariffs"]
+      ],
+      "forbidden_terms": ["burnett", "supervised release", "3553(a)(2)(A)"]
+    },
+    {
+      "id": "rag_param_013",
+      "category": "off_target_refusal",
+      "query": "What is the best federal tax strategy for a freelancer who wants to reduce quarterly payments using LLC election tricks?",
+      "required_groups": [
+        ["insufficient support", "insufficient", "not in the retrieved", "cannot determine from the retrieved"]
+      ],
+      "forbidden_terms": ["llc election", "quarterly estimated taxes", "s corp election", "tax strategy"]
+    },
+    {
+      "id": "rag_param_014",
+      "category": "off_target_refusal",
+      "query": "Did the Supreme Court recently require hospitals to publish fixed cash prices for every emergency room procedure nationwide?",
+      "required_groups": [
+        ["insufficient support", "insufficient", "not in the retrieved", "cannot determine from the retrieved"]
+      ],
+      "forbidden_terms": ["hospitals must", "cash prices", "emergency room procedure"]
+    }
+  ]
+}

@@ -1,0 +1,320 @@
+{
+  "name": "rag_in_depth_response_set_2026-04-21_plus",
+  "created_on": "2026-04-21",
+  "description": "A richer live-system evaluation set designed to elicit longer, multi-paragraph, bullet-friendly responses while remaining grounded in corpus-backed Supreme Court cases.",
+  "items": [
+    {
+      "id": "rid_001",
+      "category": "in_depth_case_explanation",
+      "conversation_key": "burnett_deep_thread",
+      "query": "In Burnett v. United States, answer in at least two short paragraphs and include a brief bullet list. First give the bottom line in plain English. Then explain the separate opinion and why the justice thought the Court should have taken the case.",
+      "target_case": "Burnett v. United States",
+      "expect_case_filter": true,
+      "required_groups": [
+        [
+          "denied certiorari",
+          "denied review",
+          "denied the petition"
+        ],
+        [
+          "gorsuch",
+          "dissent"
+        ]
+      ],
+      "forbidden_terms": [
+        "esteras",
+        "ieepa",
+        "tariffs"
+      ]
+    },
+    {
+      "id": "rid_002",
+      "category": "in_depth_case_explanation",
+      "conversation_key": "esteras_deep_thread",
+      "query": "In Esteras v. United States, write two short paragraphs and then a bullet list of the practical rule. Explain what the Court said about supervised-release revocation and retribution, and why that matters for district courts.",
+      "target_case": "Esteras v. United States",
+      "expect_case_filter": true,
+      "required_groups": [
+        [
+          "3553(a)(2)(A)",
+          "retribution"
+        ],
+        [
+          "may not consider",
+          "cannot consider",
+          "must not consider",
+          "not relevant"
+        ]
+      ],
+      "forbidden_terms": [
+        "new trial",
+        "burgess",
+        "tariffs"
+      ]
+    },
+    {
+      "id": "rid_003",
+      "category": "in_depth_case_explanation",
+      "conversation_key": "royal_canin_deep_thread",
+      "query": "In Royal Canin U.S.A., Inc. v. Wullschleger, give two paragraphs and a short bullet list explaining what happened after the amended complaint removed the federal claims. Focus on federal jurisdiction and remand in practical terms.",
+      "target_case": "Royal Canin U.S.A., Inc. v. Wullschleger",
+      "expect_case_filter": true,
+      "required_groups": [
+        [
+          "amended complaint"
+        ],
+        [
+          "federal-question jurisdiction",
+          "federal question jurisdiction",
+          "supplemental jurisdiction"
+        ],
+        [
+          "remand",
+          "state court"
+        ]
+      ],
+      "forbidden_terms": [
+        "tariffs",
+        "supervised release",
+        "gorsuch"
+      ]
+    },
+    {
+      "id": "rid_004",
+      "category": "in_depth_case_explanation",
+      "conversation_key": "learning_resources_deep_thread",
+      "query": "In Learning Resources, Inc. v. Trump, answer in two paragraphs and then list the core holding in bullets. Explain whether IEEPA authorized tariffs and what the Court said about that issue.",
+      "target_case": "Learning Resources, Inc. v. Trump",
+      "expect_case_filter": true,
+      "required_groups": [
+        [
+          "ieepa"
+        ],
+        [
+          "tariffs"
+        ],
+        [
+          "does not authorize",
+          "did not authorize",
+          "not authorize"
+        ]
+      ],
+      "forbidden_terms": [
+        "burnett",
+        "supervised release",
+        "retribution"
+      ]
+    },
+    {
+      "id": "rid_005",
+      "category": "in_depth_case_explanation",
+      "conversation_key": "tiktok_deep_thread",
+      "query": "In TikTok Inc. v. Garland, write two short paragraphs and include a bulleted summary of the Court's reasoning. Explain the First Amendment issue and whether the challenged law survived review.",
+      "target_case": "TikTok Inc. v. Garland",
+      "expect_case_filter": true,
+      "required_groups": [
+        [
+          "first amendment"
+        ],
+        [
+          "did not violate",
+          "does not violate",
+          "not violate",
+          "upheld"
+        ]
+      ],
+      "forbidden_terms": [
+        "tax",
+        "ieepa",
+        "supervised release"
+      ]
+    },
+    {
+      "id": "rid_006",
+      "category": "in_depth_case_explanation",
+      "conversation_key": "seven_county_deep_thread",
+      "query": "In Seven County Infrastructure Coalition v. Eagle County, explain the NEPA holding in two paragraphs and then give a bullet list with the practical rule for agencies. Keep the answer grounded in the case and avoid drifting into unrelated environmental law.",
+      "target_case": "Seven County Infrastructure Coalition v. Eagle County",
+      "expect_case_filter": true,
+      "required_groups": [
+        [
+          "nepa"
+        ],
+        [
+          "upstream",
+          "downstream"
+        ],
+        [
+          "separate",
+          "not required",
+          "does not require",
+          "need not"
+        ]
+      ],
+      "forbidden_terms": [
+        "supervised release",
+        "tariffs",
+        "title vii"
+      ]
+    },
+    {
+      "id": "rid_007",
+      "category": "in_depth_case_explanation",
+      "conversation_key": "ames_deep_thread",
+      "query": "In Ames v. Ohio Department of Youth Services, answer in two paragraphs and a short bullet list. Explain the Court's rule for majority-group Title VII plaintiffs and why the older background-circumstances rule mattered.",
+      "target_case": "Ames v. Ohio Department of Youth Services",
+      "expect_case_filter": true,
+      "required_groups": [
+        [
+          "title vii"
+        ],
+        [
+          "background-circumstances",
+          "background circumstances"
+        ],
+        [
+          "majority-group",
+          "majority group"
+        ]
+      ],
+      "forbidden_terms": [
+        "ieepa",
+        "burnett",
+        "tax"
+      ]
+    },
+    {
+      "id": "rid_008",
+      "category": "in_depth_case_explanation",
+      "conversation_key": "kousisis_deep_thread",
+      "query": "In Kousisis v. United States, write two paragraphs and then bullet the practical takeaway. Explain whether the fraud statutes required proof of economic loss and what the Court said about that element.",
+      "target_case": "Kousisis v. United States",
+      "expect_case_filter": true,
+      "required_groups": [
+        [
+          "fraud"
+        ],
+        [
+          "economic loss"
+        ],
+        [
+          "not require",
+          "does not require",
+          "need not prove"
+        ]
+      ],
+      "forbidden_terms": [
+        "tariffs",
+        "supervised release",
+        "first amendment"
+      ]
+    },
+    {
+      "id": "rid_009",
+      "category": "in_depth_case_explanation",
+      "conversation_key": "burnett_deep_thread_2",
+      "query": "In Burnett v. United States, give three short paragraphs. Start with the bottom line, then explain the dissent's concern, and finish with the practical rule lower courts should take from the opinion. End with a brief bullet list.",
+      "target_case": "Burnett v. United States",
+      "expect_case_filter": true,
+      "required_groups": [
+        [
+          "denied certiorari",
+          "denied review",
+          "denied the petition"
+        ],
+        [
+          "gorsuch",
+          "dissent"
+        ],
+        [
+          "lower courts",
+          "practical rule"
+        ]
+      ],
+      "forbidden_terms": [
+        "esteras",
+        "ieepa",
+        "tariffs"
+      ]
+    },
+    {
+      "id": "rid_010",
+      "category": "in_depth_case_explanation",
+      "conversation_key": "learning_resources_deep_thread_2",
+      "query": "In Learning Resources, Inc. v. Trump, answer in three short paragraphs and a bullet list. Explain the legal rule, the practical consequence for presidential tariff power, and why the case matters beyond the parties.",
+      "target_case": "Learning Resources, Inc. v. Trump",
+      "expect_case_filter": true,
+      "required_groups": [
+        [
+          "ieepa"
+        ],
+        [
+          "tariffs"
+        ],
+        [
+          "presidential tariff power",
+          "president",
+          "executive"
+        ]
+      ],
+      "forbidden_terms": [
+        "burnett",
+        "supervised release",
+        "retribution"
+      ]
+    },
+    {
+      "id": "rid_011",
+      "category": "in_depth_case_explanation",
+      "conversation_key": "seven_county_deep_thread_2",
+      "query": "In Seven County Infrastructure Coalition v. Eagle County, write three short paragraphs and then bullets. Explain the holding, why the Court emphasized deference, and what agencies should do differently in future environmental reviews.",
+      "target_case": "Seven County Infrastructure Coalition v. Eagle County",
+      "expect_case_filter": true,
+      "required_groups": [
+        [
+          "nepa"
+        ],
+        [
+          "deference"
+        ],
+        [
+          "future",
+          "agencies",
+          "environmental"
+        ]
+      ],
+      "forbidden_terms": [
+        "supervised release",
+        "tariffs",
+        "title vii"
+      ]
+    },
+    {
+      "id": "rid_012",
+      "category": "in_depth_case_explanation",
+      "conversation_key": "royal_canin_deep_thread_2",
+      "query": "In Royal Canin U.S.A., Inc. v. Wullschleger, explain in three short paragraphs why remand was required after the amended complaint changed the jurisdictional posture. End with a bullet list of the procedural sequence.",
+      "target_case": "Royal Canin U.S.A., Inc. v. Wullschleger",
+      "expect_case_filter": true,
+      "required_groups": [
+        [
+          "amended complaint"
+        ],
+        [
+          "jurisdiction",
+          "supplemental jurisdiction"
+        ],
+        [
+          "remand",
+          "sequence",
+          "procedure"
+        ]
+      ],
+      "forbidden_terms": [
+        "tariffs",
+        "supervised release",
+        "gorsuch"
+      ]
+    }
+  ]
+}

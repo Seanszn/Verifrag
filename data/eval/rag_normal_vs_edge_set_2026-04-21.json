@@ -1,0 +1,127 @@
+{
+  "name": "rag_normal_vs_edge_set_2026-04-21",
+  "created_on": "2026-04-21",
+  "description": "A balanced live-system eval set split into straightforward named-case prompts and brittle edge-case prompts. Normal items test direct holdings and posture extraction. Edge items test follow-up grounding, short-name resolution, citation-style references, issue-only queries, and off-target refusal behavior.",
+  "items": [
+    {
+      "id": "rag_ne_001",
+      "category": "normal_case",
+      "conversation_key": "burnett_thread",
+      "query": "In Burnett v. United States, what did the Supreme Court do in the case?",
+      "target_case": "Burnett v. United States",
+      "expect_case_filter": true,
+      "expected_posture": {
+        "decision_type": "cert_denial",
+        "court_action": "denied certiorari",
+        "opinion_role": "dissent_from_denial",
+        "author": "Gorsuch"
+      },
+      "required_groups": [
+        ["denied certiorari", "denied review", "denied the petition"],
+        ["gorsuch", "dissent"]
+      ],
+      "forbidden_terms": ["esteras", "tariffs", "ieepa"]
+    },
+    {
+      "id": "rag_ne_002",
+      "category": "normal_case",
+      "conversation_key": "burnett_thread",
+      "query": "In Burnett v. United States, who wrote the dissent from the denial of certiorari?",
+      "target_case": "Burnett v. United States",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["gorsuch"]
+      ],
+      "forbidden_terms": ["esteras", "glossip", "learning resources"]
+    },
+    {
+      "id": "rag_ne_003",
+      "category": "normal_case",
+      "conversation_key": "esteras_thread",
+      "query": "In Esteras v. United States, what did the Supreme Court decide about supervised release revocation factors?",
+      "target_case": "Esteras v. United States",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["3553(a)(2)(A)", "retribution"],
+        ["may not consider", "cannot consider", "must not consider", "not relevant"]
+      ],
+      "forbidden_terms": ["new trial", "burgess", "tariffs"]
+    },
+    {
+      "id": "rag_ne_004",
+      "category": "normal_case",
+      "conversation_key": "esteras_thread",
+      "query": "In Esteras v. United States, could a court consider retribution when revoking supervised release?",
+      "target_case": "Esteras v. United States",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["no", "cannot", "may not", "must not"],
+        ["retribution", "3553(a)(2)(A)"]
+      ],
+      "forbidden_terms": ["new trial", "burgess", "tariffs"]
+    },
+    {
+      "id": "rag_ne_005",
+      "category": "normal_case",
+      "query": "In Hain Celestial Group, Inc. v. Palmquist, what did the Supreme Court hold about whether an erroneous post-removal dismissal cured the jurisdictional defect at removal?",
+      "target_case": "Hain Celestial Group, Inc. v. Palmquist",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["did not cure", "did not fix", "did not eliminate"],
+        ["jurisdictional defect", "defect at removal", "diversity jurisdiction"],
+        ["vacated", "remanded"]
+      ],
+      "forbidden_terms": ["new trial", "burnett", "tariffs"]
+    },
+    {
+      "id": "rag_ne_006",
+      "category": "edge_case",
+      "conversation_key": "burnett_thread",
+      "query": "Who wrote the separate opinion?",
+      "required_groups": [
+        ["gorsuch"]
+      ],
+      "forbidden_terms": ["esteras", "learning resources", "glossip"]
+    },
+    {
+      "id": "rag_ne_007",
+      "category": "edge_case",
+      "query": "What did Burnett say about whether supervised release can push prison time past the statutory maximum without a jury?",
+      "required_groups": [
+        ["denied certiorari", "denied review", "court denied"],
+        ["gorsuch", "dissent"]
+      ],
+      "forbidden_terms": ["3553(a)(2)(A)", "esteras", "tariffs"]
+    },
+    {
+      "id": "rag_ne_008",
+      "category": "edge_case",
+      "query": "What did 606 U.S. 185 hold about supervised release revocation factors?",
+      "required_groups": [
+        ["3553(a)(2)(A)", "retribution"],
+        ["may not consider", "cannot consider", "must not consider", "not relevant"]
+      ],
+      "forbidden_terms": ["new trial", "burgess", "tariffs"]
+    },
+    {
+      "id": "rag_ne_009",
+      "category": "edge_case",
+      "query": "What did the Supreme Court say about whether IEEPA lets the President impose tariffs?",
+      "required_groups": [
+        ["ieepa"],
+        ["does not authorize", "did not authorize", "not authorize"],
+        ["tariffs"]
+      ],
+      "forbidden_terms": ["burnett", "supervised release", "3553(a)(2)(A)"]
+    },
+    {
+      "id": "rag_ne_010",
+      "category": "edge_case",
+      "query": "What is the best federal tax strategy for a freelancer who wants to reduce quarterly payments using LLC election tricks?",
+      "required_groups": [
+        ["insufficient support", "insufficient", "not in the retrieved", "cannot determine from the retrieved"]
+      ],
+      "forbidden_terms": ["llc election", "quarterly estimated taxes", "s corp election", "tax strategy"]
+    }
+  ]
+}
