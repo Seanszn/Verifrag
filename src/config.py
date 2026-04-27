@@ -25,6 +25,16 @@ def env_flag(name: str, default: bool) -> bool:
     return raw_value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def env_int(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value)
+    except ValueError:
+        return default
+
+
 def huggingface_local_only_default() -> bool:
     return env_flag("HF_LOCAL_FILES_ONLY", False) or env_flag("HF_HUB_OFFLINE", False) or env_flag("TRANSFORMERS_OFFLINE", False)
 
@@ -67,7 +77,10 @@ class LLMConfig:
     temperature: float = 0.1
     max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "1024"))
     request_timeout_seconds: int = int(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "150"))
-    num_ctx: int | None = int(os.getenv("OLLAMA_NUM_CTX", "4096"))
+    # 8192 is a practical default for local 3B-class models on a 4 GB VRAM
+    # machine: materially more room for RAG context without the latency/memory
+    # jump of very large context windows.
+    num_ctx: int | None = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
     num_batch: int | None = (
         int(os.getenv("OLLAMA_NUM_BATCH"))
         if os.getenv("OLLAMA_NUM_BATCH")
@@ -132,6 +145,10 @@ class ModelConfig:
         if os.getenv("NLI_DEVICE")
         else None
     )
+    nli_batch_size: int = env_int("NLI_BATCH_SIZE", 8)
+    nli_max_length: int = env_int("NLI_MAX_LENGTH", 512)
+    nli_dtype: str = os.getenv("NLI_DTYPE", "auto").strip().lower()
+    nli_unload_after_request: bool = env_flag("NLI_UNLOAD_AFTER_REQUEST", False)
     nli_labels: List[str] = field(default_factory=lambda: ["contradiction", "neutral", "entailment"])
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     huggingface_local_files_only: bool = field(default_factory=huggingface_local_only_default)

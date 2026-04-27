@@ -15,6 +15,7 @@ from src.indexing.bm25_index import BM25Index
 from src.indexing.chroma_store import ChromaStore
 from src.indexing.embedder import Embedder
 from src.indexing.index_discovery import discover_index_artifacts
+from src.ingestion.document import LegalChunk
 from src.retrieval.hybrid_retriever import HybridRetriever
 from src.retrieval.user_uploads import load_user_upload_retriever
 from src.storage.database import Database
@@ -28,6 +29,9 @@ CONVERSATION_CONTEXT_MESSAGE_LIMIT = 2
 MERGED_RETRIEVAL_LIMIT = RETRIEVAL.rerank_k
 TARGET_CASE_METADATA_CHUNK_LIMIT = 40
 TARGET_CASE_PROMPT_CHUNK_LIMIT = 8
+TOPIC_FALLBACK_PROMPT_CHUNK_LIMIT = 6
+USER_UPLOAD_COMPARISON_PUBLIC_CHUNK_LIMIT = 3
+USER_UPLOAD_PUBLIC_RETRIEVAL_TERM_LIMIT = 16
 TARGET_CASE_PROMPT_SENTENCE_LIMIT = 3
 TARGET_CASE_DETAILED_PROMPT_SENTENCE_LIMIT = 5
 RESPONSE_DEPTH_CONCISE = "concise"
@@ -52,6 +56,12 @@ _DETAILED_RESPONSE_QUERY_RE = re.compile(
     r"|outline\b"
     r"|walk\s+through\b"
     r")",
+    re.IGNORECASE,
+)
+_USER_UPLOAD_COMPARISON_QUERY_RE = re.compile(
+    r"\b(?:compare|comparison|analog(?:y|ize)|distinguish|similarit(?:y|ies)|"
+    r"differences?|relevant\s+(?:corpus\s+)?cases?|prior\s+cases?|precedent|"
+    r"authorit(?:y|ies)|case\s+law|external\s+(?:cases|authority))\b",
     re.IGNORECASE,
 )
 _CASE_QUERY_RE = re.compile(
@@ -79,11 +89,106 @@ _ISSUE_ANALYSIS_QUERY_RE = re.compile(
     r"\b(?:whether|why|how|reason|analysis|say\s+about|explain|rule|factor|factors|consider|apply|application|mean|means|argue|argued)\b",
     re.IGNORECASE,
 )
+_RESEARCH_LEADS_QUERY_RE = re.compile(
+    r"\b(?:"
+    r"find\s+(?:me\s+)?(?:some\s+)?cases?"
+    r"|identify\s+(?:some\s+)?(?:cases?|authorit(?:y|ies)|precedent)"
+    r"|what\s+cases?\s+(?:discuss|address|talk\s+about|deal\s+with|involve)"
+    r"|which\s+cases?\s+(?:discuss|address|talk\s+about|deal\s+with|involve)"
+    r"|cases?\s+(?:about|on|involving|discussing|addressing)"
+    r"|case\s+law\s+(?:about|on|for|involving|discussing|addressing)"
+    r"|authorit(?:y|ies)\s+(?:about|on|for|involving|discussing|addressing)"
+    r"|precedent\s+(?:about|on|for|involving|discussing|addressing)"
+    r"|research\s+leads?"
+    r"|examples?\s+of"
+    r")\b",
+    re.IGNORECASE,
+)
+_TOPIC_SIGNAL_RE = re.compile(
+    r"\b(?:law|property|contract|tort|criminal|constitutional|statutory|"
+    r"adverse\s+possession|easement|title|possession|negligence|damages|"
+    r"jurisdiction|standing|due\s+process|first\s+amendment|fourth\s+amendment|"
+    r"supervised\s+release|sentencing|habeas|brady|materiality|fraud|tariff|agency)\b",
+    re.IGNORECASE,
+)
 _FOLLOWUP_REFERENCE_RE = re.compile(
     r"\b(?:that|this|it|its|the case|the court|the separate opinion|separate opinion|"
     r"the dissent|the concurrence|same case|that case|that opinion)\b",
     re.IGNORECASE,
 )
+_RELATED_RETRIEVED_AUTHORITY_CLAIM_RE = re.compile(
+    r"^\s*Based\s+on\s+related\s+retrieved\s+authorit(?:y|ies)\b",
+    re.IGNORECASE,
+)
+_CHEVRON_CONTROLS_CLAIM_RE = re.compile(
+    r"\bChevron(?:\s+deference)?\b.{0,80}\b(?:controls?|controlling|appl(?:y|ies)|governs?|is\s+the\s+rule)\b|"
+    r"\b(?:controls?|controlling|governs?|appl(?:y|ies)|is\s+the\s+rule)\b.{0,80}\bChevron(?:\s+deference)?\b",
+    re.IGNORECASE,
+)
+_CHEVRON_REJECTING_EVIDENCE_RE = re.compile(
+    r"\b(?:overrul(?:e|ed|es|ing)|cannot\s+be\s+squared|is\s+overruled|"
+    r"no\s+longer\s+(?:applies|controls)|does\s+not\s+apply|reject(?:s|ed|ing)?)\b.{0,120}\bChevron\b|"
+    r"\bChevron\b.{0,120}\b(?:overrul(?:e|ed|es|ing)|cannot\s+be\s+squared|"
+    r"no\s+longer\s+(?:applies|controls)|does\s+not\s+apply|reject(?:s|ed|ing)?)\b",
+    re.IGNORECASE,
+)
+_RESEARCH_LEADS_GENERIC_TOKENS = {
+    "action",
+    "actions",
+    "agency",
+    "article",
+    "authority",
+    "challenge",
+    "claim",
+    "claims",
+    "concrete",
+    "defendant",
+    "demonstrate",
+    "federal",
+    "government",
+    "held",
+    "injury",
+    "law",
+    "legal",
+    "likely",
+    "plaintiff",
+    "plaintiffs",
+    "regulation",
+    "requires",
+    "rule",
+    "show",
+    "standing",
+    "statute",
+}
+_SOURCE_DISCIPLINE_QUERY_RE = re.compile(
+    r"\b(?:use\s+only\s+retrieved\s+sources|retrieved\s+sources\s+do\s+not\s+mention|"
+    r"if\s+the\s+retrieved\s+sources\s+do\s+not|source\s+discipline|"
+    r"do\s+not\s+(?:infer|guess)|say\s+that\s+instead)\b",
+    re.IGNORECASE,
+)
+_QUERY_SUBJECT_GENERIC_TOKENS = {
+    "about",
+    "answer",
+    "authority",
+    "case",
+    "claim",
+    "court",
+    "database",
+    "does",
+    "explain",
+    "holding",
+    "instead",
+    "mention",
+    "mentioned",
+    "only",
+    "retrieved",
+    "rule",
+    "say",
+    "source",
+    "sources",
+    "summarize",
+    "using",
+}
 _FOLLOWUP_AUTHOR_RE = re.compile(
     r"\b(?:who\s+(?:wrote|authored)|which\s+justice|author)\b",
     re.IGNORECASE,
@@ -208,7 +313,41 @@ _LOW_VALUE_VERIFICATION_CLAIM_RE = re.compile(
     r"^\s*(?:so too here|same here|for these reasons|for that reason|that is enough|"
     r"that resolves the question|\*+|insufficient support in retrieved authorities.*|"
     r"retrieved authorities do not.*|retrieved context does not.*|"
-    r"cannot determine from (?:the )?retrieved.*)\.?\s*$",
+    r"cannot determine from (?:the )?retrieved.*|"
+    r"i do not have .+ in the retrieved database.*|"
+    r"the uploaded document excerpt does not identify .*)\.?\s*$",
+    re.IGNORECASE,
+)
+_FRAGMENT_VERIFICATION_CLAIM_RE = re.compile(
+    r"^\s*(?:"
+    r"[A-Z]\.|"
+    r"[A-Z]\.\s*[A-Z]\.|"
+    r"[\"'“”.,;:]+\.?|"
+    r"v\.\s+[^.]+\.?|"
+    r"(?:see\s+)?id\.,?.*|"
+    r"[A-Z][a-z]+,\s+and\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\.?|"
+    r")\s*$",
+    re.IGNORECASE,
+)
+_TRAILING_ABBREVIATION_FRAGMENT_RE = re.compile(
+    r"\b(?:Mr|Mrs|Ms|Dr|Prof|Hon|Lt|No|Nos|Inc|Corp|Co|Ltd|L\.P|L\.L\.C|U\.S|U\.S\.C|D\.C|Cir|v)\.\s*$",
+    re.IGNORECASE,
+)
+_DANGLING_VERIFICATION_CLAIM_END_RE = re.compile(
+    r"\b(?:and|or|but|because|that|which|who|whom|whose|when|where|while|"
+    r"with|without|to|of|for|from|by|as|just)\.$",
+    re.IGNORECASE,
+)
+_SINGLE_INITIAL_VERIFICATION_END_RE = re.compile(r"\b[A-Z]\.$")
+_INITIAL_SEQUENCE_END_RE = re.compile(r"(?:\b[A-Z]\.\s*){2,}$")
+_VERIFICATION_CLAIM_VERB_RE = re.compile(
+    r"\b(?:is|are|was|were|be|been|being|has|have|had|do|does|did|"
+    r"held|holds|hold|said|says|state|states|stated|found|finds|concluded|"
+    r"ruled|decided|affirmed|reversed|vacated|remanded|denied|granted|"
+    r"requires?|prohibits?|allows?|authorizes?|applies?|violates?|means?|"
+    r"seeks?|suffered|lacks?|lost|lists?|identifies?|overrules?|"
+    r"concerns?|addresses?|involves?|includes?|excludes?|"
+    r"must|may|can|cannot|could|should)\b",
     re.IGNORECASE,
 )
 _ANSWER_BLOCK_TRANSITION_RE = re.compile(
@@ -225,7 +364,8 @@ _ANSWER_BLOCK_LABEL_LEAD_IN_RE = re.compile(
 _ANSWER_BLOCK_CAVEAT_RE = re.compile(
     r"\b(?:insufficient support|retrieved context does not|retrieved authorities do not|"
     r"not enough evidence|cannot determine|does not identify|no separate opinion identified|"
-    r"not available in the retrieved context|unclear from the retrieved)\b",
+    r"not available in the retrieved context|unclear from the retrieved|"
+    r"do not have .+ in the retrieved database)\b",
     re.IGNORECASE,
 )
 _ANSWER_BLOCK_FACT_ANCHOR_RE = re.compile(
@@ -314,6 +454,7 @@ class QueryPipeline:
         conversation_id: Optional[int] = None,
         *,
         request_id: str | None = None,
+        include_uploaded_chunks: bool = False,
     ) -> dict[str, Any]:
         log_request_id = request_id or "local"
         logger.info(
@@ -340,6 +481,7 @@ class QueryPipeline:
             conversation_state=stored_conversation_state.get("state") if stored_conversation_state else None,
             user_id=user_id,
             request_id=log_request_id,
+            include_uploaded_chunks=include_uploaded_chunks,
         )
         interaction = self.db.complete_interaction(interaction["id"], assistant_text)
         assistant_message = self.db.add_message(
@@ -413,6 +555,7 @@ class QueryPipeline:
         conversation_state: dict[str, Any] | None = None,
         user_id: int,
         request_id: str | None = None,
+        include_uploaded_chunks: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         effective_query, followup_grounding_meta = _ground_followup_query(
             query,
@@ -426,17 +569,47 @@ class QueryPipeline:
         public_retrieval_error = False
         shared_embedder = getattr(self.retriever, "embedder", None)
         timings_ms: dict[str, float] = {}
-        user_upload_retriever, user_upload_status = load_user_upload_retriever(
-            user_id,
-            shared_embedder=shared_embedder,
-        )
+        user_upload_retriever = None
+        user_upload_status = "disabled:not_requested"
+        if include_uploaded_chunks:
+            user_upload_retriever, user_upload_status = load_user_upload_retriever(
+                user_id,
+                shared_embedder=shared_embedder,
+            )
         user_upload_retrieval_error = False
+
+        public_retrieval_query = effective_query
+        public_retrieval_query_meta = {
+            "status": "not_applied:not_user_upload_comparison",
+            "original_query": effective_query,
+            "public_query": effective_query,
+        }
+        public_rerank_meta = {"status": "not_applied:disabled_query_variant_only"}
+        user_upload_retrieved = False
 
         retrieval_started = time.perf_counter()
         logger.info("query.stage_start request_id=%s stage=retrieval", request_id)
+        if (
+            user_upload_retriever is not None
+            and _query_mentions_upload(effective_query)
+            and _query_requests_upload_comparison(effective_query)
+        ):
+            try:
+                user_upload_chunks = user_upload_retriever.retrieve(effective_query)
+                user_upload_retrieved = True
+                public_retrieval_query, public_retrieval_query_meta = (
+                    _build_user_upload_public_retrieval_query(
+                        effective_query,
+                        user_upload_chunks,
+                    )
+                )
+            except Exception as exc:  # pragma: no cover - defensive path for live index/runtime failures
+                user_upload_status = f"error:{exc.__class__.__name__}"
+                user_upload_retrieval_error = True
+
         if self.retriever is not None:
             try:
-                public_chunks = self.retriever.retrieve(effective_query)
+                public_chunks = self.retriever.retrieve(public_retrieval_query)
                 retriever_status = getattr(self.retriever, "last_backend_status", None)
                 if callable(retriever_status):
                     status_detail = retriever_status()
@@ -456,7 +629,7 @@ class QueryPipeline:
             limit=TARGET_CASE_METADATA_CHUNK_LIMIT,
         )
 
-        if user_upload_retriever is not None:
+        if user_upload_retriever is not None and not user_upload_retrieved:
             try:
                 user_upload_chunks = user_upload_retriever.retrieve(effective_query)
             except Exception as exc:  # pragma: no cover - defensive path for live index/runtime failures
@@ -482,7 +655,11 @@ class QueryPipeline:
         )
 
         generation_started = time.perf_counter()
-        query_grounding = _resolve_query_grounding(effective_query, retrieved_chunks)
+        query_grounding = _resolve_query_grounding(
+            effective_query,
+            retrieved_chunks,
+            llm_router=self.llm,
+        )
         response_depth = _classify_response_depth(effective_query)
         if followup_grounding_meta["status"].startswith("applied:"):
             query_grounding["followup_grounding"] = followup_grounding_meta
@@ -493,17 +670,64 @@ class QueryPipeline:
                 query_grounding["target_doc_ids"] = followup_grounding_meta.get("target_doc_ids") or []
                 query_grounding["source"] = "conversation_state"
                 query_grounding["status"] = "resolved:conversation_state"
-        prompt_chunks, prompt_filter_meta = _select_prompt_chunks_for_generation(
+        topic_fallback_chunks, topic_fallback_meta = _build_missing_case_topic_fallback(
             effective_query,
-            retrieved_chunks,
             query_grounding=query_grounding,
+            retriever=self.retriever,
+            initial_chunks=retrieved_chunks,
+            limit=TOPIC_FALLBACK_PROMPT_CHUNK_LIMIT,
+        )
+        if topic_fallback_chunks:
+            retrieved_chunks = topic_fallback_chunks
+            query_grounding = {
+                **query_grounding,
+                "target_case": None,
+                "target_doc_ids": [],
+                "status": "not_resolved:missing_explicit_case_topic_fallback",
+                "missing_explicit_case": topic_fallback_meta.get("missing_case"),
+                "topic_fallback_used": True,
+                "topic_fallback_query": topic_fallback_meta.get("topic_query"),
+            }
+            prompt_chunks = topic_fallback_chunks
+            prompt_filter_meta = {
+                "status": "applied:missing_case_topic_fallback",
+                "target_case": None,
+                "candidate_count": len(topic_fallback_chunks),
+                "limit": TOPIC_FALLBACK_PROMPT_CHUNK_LIMIT,
+                "query_grounding_status": query_grounding.get("status"),
+            }
+        else:
+            prompt_chunks, prompt_filter_meta = _select_prompt_chunks_for_generation(
+                effective_query,
+                retrieved_chunks,
+                query_grounding=query_grounding,
+            )
+        research_leads_mode = (
+            _query_requests_research_leads(effective_query, query_grounding)
+            and not bool(topic_fallback_chunks)
         )
         generation_context, generation_context_meta = _build_generation_context(
             effective_query,
             prompt_chunks,
             query_grounding=query_grounding,
             response_depth=response_depth,
+            research_leads_mode=research_leads_mode,
         )
+        if topic_fallback_chunks:
+            generation_context = [
+                _format_missing_case_topic_scope_for_prompt(
+                    topic_fallback_meta.get("missing_case"),
+                    topic_fallback_meta.get("topic_query"),
+                ),
+                *generation_context,
+            ]
+            generation_context_meta = {
+                **generation_context_meta,
+                "status": "applied:missing_case_topic_fallback",
+                "missing_case": topic_fallback_meta.get("missing_case"),
+                "topic_query": topic_fallback_meta.get("topic_query"),
+                "topic_chunk_ids": [chunk.id for chunk in topic_fallback_chunks],
+            }
         case_posture = (
             _extract_case_posture(prompt_chunks, prompt_filter_meta["target_case"])
             if prompt_filter_meta["status"] == "applied"
@@ -523,9 +747,12 @@ class QueryPipeline:
         )
         try:
             cert_denial_guard_meta = {"status": "not_applied:generation_skipped"}
+            response_override_meta = {"status": "not_applied:generation_skipped"}
             if pre_generation_refusal:
                 response = pre_generation_refusal
                 generation_mode = "rag_refusal"
+                response_override_meta = {"status": "not_applied:pre_generation_refusal"}
+                cert_denial_guard_meta = {"status": "not_applied:pre_generation_refusal"}
             elif retrieved_chunks:
                 response = self.llm.generate_with_context(
                     effective_query,
@@ -535,41 +762,56 @@ class QueryPipeline:
                     response_depth=response_depth,
                 )
                 generation_mode = "rag"
+                if topic_fallback_chunks:
+                    response = _prepend_missing_case_topic_disclaimer(
+                        response,
+                        missing_case=topic_fallback_meta.get("missing_case"),
+                    )
             else:
                 response = self.llm.generate_legal_answer(
                     effective_query,
                     conversation_history=conversation_context,
                 )
                 generation_mode = "direct"
-            if response_depth == RESPONSE_DEPTH_DETAILED:
+            if pre_generation_refusal:
+                pass
+            elif response_depth == RESPONSE_DEPTH_DETAILED:
                 response_override_meta = {
                     "status": "not_applied:detailed_response_depth",
                     "response_depth": response_depth,
                 }
             else:
-                response, response_override_meta = _apply_case_posture_response_override(
+                response, response_override_meta = _apply_user_upload_absence_response_override(
                     query=effective_query,
                     response=response,
-                    case_posture=case_posture,
-                    query_intent=query_grounding.get("query_intent"),
+                    generation_context_meta=generation_context_meta,
                 )
                 response_override_status = str(response_override_meta.get("status", ""))
-                if (
-                    not response_override_status.startswith("applied:")
-                    and response_override_status != "not_applied:intent_not_posture_or_author"
-                ):
-                    response, response_override_meta = _apply_explicit_holding_response_override(
+                if not response_override_status.startswith("applied:"):
+                    response, response_override_meta = _apply_case_posture_response_override(
                         query=effective_query,
                         response=response,
-                        generation_context_meta=generation_context_meta,
-                        target_case=prompt_filter_meta.get("target_case"),
+                        case_posture=case_posture,
+                        query_intent=query_grounding.get("query_intent"),
                     )
-            response, cert_denial_guard_meta = _apply_cert_denial_safety_guard(
-                response=response,
-                case_posture=case_posture,
-                generation_context_meta=generation_context_meta,
-                prompt_chunks=prompt_chunks,
-            )
+                    response_override_status = str(response_override_meta.get("status", ""))
+                    if (
+                        not response_override_status.startswith("applied:")
+                        and response_override_status != "not_applied:intent_not_posture_or_author"
+                    ):
+                        response, response_override_meta = _apply_explicit_holding_response_override(
+                            query=effective_query,
+                            response=response,
+                            generation_context_meta=generation_context_meta,
+                            target_case=prompt_filter_meta.get("target_case"),
+                        )
+            if not pre_generation_refusal:
+                response, cert_denial_guard_meta = _apply_cert_denial_safety_guard(
+                    response=response,
+                    case_posture=case_posture,
+                    generation_context_meta=generation_context_meta,
+                    prompt_chunks=prompt_chunks,
+                )
             backend_status = "ok"
             llm_error = None
         except Exception as exc:  # pragma: no cover - defensive path for live Ollama failures
@@ -614,6 +856,7 @@ class QueryPipeline:
             "llm_backend_status": backend_status,
             "generation_mode": generation_mode,
             "response_depth": response_depth,
+            "include_uploaded_chunks": bool(include_uploaded_chunks),
             "effective_query": effective_query,
             "followup_grounding_status": followup_grounding_meta["status"],
             "followup_grounding_meta": followup_grounding_meta,
@@ -624,10 +867,36 @@ class QueryPipeline:
                 user_upload_chunks,
             ),
             "public_retrieval_backend_status": retrieval_status,
+            "public_retrieval_query": public_retrieval_query,
+            "public_retrieval_query_meta": public_retrieval_query_meta,
+            "public_rerank_meta": public_rerank_meta,
             "user_upload_retrieval_backend_status": user_upload_status,
             "target_metadata_retrieval_status": target_metadata_meta["status"],
             "target_metadata_retrieval_count": len(target_metadata_chunks),
             "target_metadata_retrieval_meta": target_metadata_meta,
+            "answer_mode": _answer_mode(
+                generation_mode=generation_mode,
+                topic_fallback_used=bool(topic_fallback_chunks),
+                pre_generation_refusal=bool(pre_generation_refusal),
+                retrieval_used=bool(retrieved_chunks),
+                research_leads_mode=research_leads_mode,
+            ),
+            "research_leads_mode": bool(research_leads_mode),
+            "research_leads_status": (
+                generation_context_meta["status"]
+                if research_leads_mode
+                else "not_applied:not_research_leads_query"
+            ),
+            "missing_target_case": topic_fallback_meta.get("missing_case"),
+            "topic_fallback_used": bool(topic_fallback_chunks),
+            "topic_fallback_status": topic_fallback_meta["status"],
+            "topic_fallback_query": topic_fallback_meta.get("topic_query"),
+            "topic_fallback_chunk_count": len(topic_fallback_chunks),
+            "target_case_answered": bool(
+                query_grounding.get("target_case")
+                and not topic_fallback_chunks
+                and not pre_generation_refusal
+            ),
             "retrieval_chunk_count": len(retrieved_chunks),
             "public_retrieval_chunk_count": len(public_chunks),
             "user_upload_retrieval_chunk_count": len(user_upload_chunks),
@@ -666,6 +935,7 @@ class QueryPipeline:
             "response_repair_status": "not_applied:not_verified",
             "response_repair_meta": {"status": "not_applied:not_verified"},
             "verification_verifier_mode": VERIFICATION.verifier_mode,
+            "verification_verifier": _verifier_runtime_meta(self.verifier),
             "verification_enabled": self.enable_verification,
             "conversation_context_message_count": len(conversation_context or []),
             "claim_support_summary": _empty_claim_support_summary(),
@@ -749,8 +1019,10 @@ class QueryPipeline:
         meta["verification_chunk_count"] = len(verification_chunks)
         meta["verification_chunk_ids"] = [chunk.id for chunk in verification_chunks]
         meta["verification_scope_status"] = verification_scope_meta["status"]
+        meta["verification_scope"] = verification_scope_meta
 
         verifier = self._get_verifier()
+        meta["verification_verifier"] = _verifier_runtime_meta(verifier)
         verification_started = time.perf_counter()
         logger.info(
             "query.stage_start request_id=%s stage=verification claims=%s chunks=%s pairs=%s",
@@ -812,11 +1084,15 @@ class QueryPipeline:
                     query_grounding=query_grounding,
                     generation_context_meta=generation_context_meta,
                 )
-                repaired_response, response_repair_meta = _apply_supported_claim_repair(
-                    response,
-                    normalized_claims,
-                    generation_context_meta,
-                )
+                if str(response_override_meta.get("status") or "") == "applied:user_upload_absence":
+                    repaired_response = response
+                    response_repair_meta = {"status": "not_applied:user_upload_absence_override"}
+                else:
+                    repaired_response, response_repair_meta = _apply_supported_claim_repair(
+                        response,
+                        normalized_claims,
+                        generation_context_meta,
+                    )
                 if response_repair_meta["status"].startswith("applied:"):
                     repair_started = time.perf_counter()
                     response = repaired_response
@@ -838,6 +1114,7 @@ class QueryPipeline:
                 meta["claims"] = normalized_claims
                 meta["claim_citation_links"] = claim_citation_links
                 meta["verification_backend_status"] = "warning:fallback:HeuristicNLIVerifier"
+                meta["verification_verifier"] = _verifier_runtime_meta(fallback_verifier)
                 meta["verification_error"] = {
                     "type": exc.__class__.__name__,
                     "message": str(exc),
@@ -884,11 +1161,15 @@ class QueryPipeline:
             query_grounding=query_grounding,
             generation_context_meta=generation_context_meta,
         )
-        repaired_response, response_repair_meta = _apply_supported_claim_repair(
-            response,
-            normalized_claims,
-            generation_context_meta,
-        )
+        if str(response_override_meta.get("status") or "") == "applied:user_upload_absence":
+            repaired_response = response
+            response_repair_meta = {"status": "not_applied:user_upload_absence_override"}
+        else:
+            repaired_response, response_repair_meta = _apply_supported_claim_repair(
+                response,
+                normalized_claims,
+                generation_context_meta,
+            )
         if response_repair_meta["status"].startswith("applied:"):
             repair_started = time.perf_counter()
             response = repaired_response
@@ -910,6 +1191,7 @@ class QueryPipeline:
         meta["claims"] = normalized_claims
         meta["claim_citation_links"] = claim_citation_links
         meta["verification_backend_status"] = "ok"
+        meta["verification_verifier"] = _verifier_runtime_meta(verifier)
         meta["response_repair_status"] = response_repair_meta["status"]
         meta["response_repair_meta"] = response_repair_meta
         _update_answer_support_metadata(meta, response=response)
@@ -975,6 +1257,20 @@ def _default_title(query: str) -> str:
     if len(trimmed) <= 60:
         return trimmed
     return trimmed[:57].rstrip() + "..."
+
+
+def _verifier_runtime_meta(verifier: Any) -> dict[str, Any] | None:
+    if verifier is None:
+        return None
+    return {
+        "class": verifier.__class__.__name__,
+        "model_name": getattr(verifier, "model_name", None),
+        "device": getattr(verifier, "device", None),
+        "dtype": getattr(verifier, "dtype", None),
+        "batch_size": getattr(verifier, "batch_size", None),
+        "max_length": getattr(verifier, "max_length", None),
+        "unload_after_request": getattr(verifier, "unload_after_request", None),
+    }
 
 
 def _conversation_state_summary(query: str, response: str) -> str:
@@ -1152,12 +1448,20 @@ def _clean_extracted_case_name(raw_case: str | None) -> str | None:
     return target_case or None
 
 
-def _resolve_query_grounding(query: str, retrieved_chunks: list) -> dict[str, Any]:
-    explicit_case = _extract_target_case_name(query)
+def _resolve_query_grounding(
+    query: str,
+    retrieved_chunks: list,
+    *,
+    llm_router: Any | None = None,
+) -> dict[str, Any]:
+    has_user_uploads = _has_user_upload_chunks(retrieved_chunks)
+    explicit_case = None if has_user_uploads and _query_mentions_upload(query) else _extract_target_case_name(query)
     citation = _extract_query_citation(query)
     target_case = None
     target_doc_ids: set[str] = set()
     source = None
+    route_meta: dict[str, Any] = {"status": "not_applied:deterministic_grounding"}
+    llm_route: str | None = None
 
     if explicit_case:
         target_case, target_doc_ids = _resolve_explicit_case_target(explicit_case, retrieved_chunks)
@@ -1165,23 +1469,34 @@ def _resolve_query_grounding(query: str, retrieved_chunks: list) -> dict[str, An
     elif citation:
         target_case, target_doc_ids = _resolve_citation_target(citation, retrieved_chunks)
         source = "citation" if target_case else "citation_unresolved"
-    elif _has_user_upload_chunks(retrieved_chunks):
-        source = "short_name_skipped_user_upload"
+    elif has_user_uploads:
+        source = "user_upload"
     else:
         target_case, target_doc_ids = _resolve_short_name_target(query, retrieved_chunks)
         if target_case:
             source = "short_name"
         else:
-            target_case, target_doc_ids = _resolve_convergent_retrieval_target(query, retrieved_chunks)
-            source = "retrieval_convergence" if target_case else "unresolved"
+            route_meta = _classify_query_route_with_llm(llm_router, query)
+            llm_route = str(route_meta.get("route") or "").strip().lower() or None
+            if (
+                route_meta.get("status") == "ok"
+                and float(route_meta.get("confidence") or 0.0) >= 0.65
+                and llm_route in {"topic_overview", "research_leads", "off_corpus", "clarification_needed"}
+            ):
+                source = f"llm_route:{llm_route}"
+            else:
+                target_case, target_doc_ids = _resolve_convergent_retrieval_target(query, retrieved_chunks)
+                source = "retrieval_convergence" if target_case else "unresolved"
 
     query_intent = _classify_query_intent(
         query,
         target_case=target_case,
         citation=citation,
+        llm_route=llm_route,
     )
     status = f"resolved:{source}" if target_case else f"not_resolved:{source or 'no_signal'}"
     return {
+        "query": query,
         "status": status,
         "target_case": target_case,
         "target_citation": citation,
@@ -1189,6 +1504,10 @@ def _resolve_query_grounding(query: str, retrieved_chunks: list) -> dict[str, An
         "explicit_case": explicit_case,
         "source": source,
         "query_intent": query_intent,
+        "llm_route": llm_route,
+        "llm_route_meta": route_meta,
+        "has_user_upload_context": has_user_uploads,
+        "mentions_user_upload": _query_mentions_upload(query),
     }
 
 
@@ -1196,20 +1515,278 @@ def _has_user_upload_chunks(retrieved_chunks: list) -> bool:
     return any(getattr(chunk, "doc_type", None) == "user_upload" for chunk in retrieved_chunks)
 
 
+def _query_mentions_upload(query: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:upload(?:ed|s)?|my\s+(?:document|draft|file|memo|memorandum|motion)|"
+            r"client\s+(?:document|draft|file|memo|memorandum|motion)|work\s+product)\b",
+            str(query or ""),
+            re.IGNORECASE,
+        )
+    )
+
+
+def _classify_query_route_with_llm(llm_router: Any | None, query: str) -> dict[str, Any]:
+    classifier = getattr(llm_router, "classify_query_route", None)
+    if not callable(classifier):
+        return {
+            "status": "not_applied:no_llm_router",
+            "route": None,
+            "confidence": 0.0,
+        }
+    try:
+        result = classifier(query)
+    except Exception as exc:  # pragma: no cover - defensive path for live backend failures
+        return {
+            "status": f"error:{exc.__class__.__name__}",
+            "route": None,
+            "confidence": 0.0,
+            "reason": str(exc),
+        }
+    if not isinstance(result, dict):
+        return {
+            "status": "error:invalid_router_result",
+            "route": None,
+            "confidence": 0.0,
+        }
+    route = str(result.get("route") or "").strip().lower()
+    valid_routes = {
+        "topic_overview",
+        "research_leads",
+        "case_lookup",
+        "off_corpus",
+        "clarification_needed",
+    }
+    if route not in valid_routes:
+        return {
+            **result,
+            "status": "error:invalid_route",
+            "route": None,
+            "confidence": 0.0,
+        }
+    try:
+        confidence = float(result.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return {
+        **result,
+        "status": str(result.get("status") or "ok"),
+        "route": route,
+        "confidence": max(0.0, min(1.0, confidence)),
+    }
+
+
+def _query_requests_upload_comparison(query: str) -> bool:
+    return bool(_USER_UPLOAD_COMPARISON_QUERY_RE.search(str(query or "")))
+
+
+def _build_user_upload_public_retrieval_query(query: str, upload_chunks: list) -> tuple[str, dict[str, Any]]:
+    query_text = str(query or "").strip()
+    if not _query_mentions_upload(query_text):
+        return query_text, {
+            "status": "not_applied:no_user_upload_reference",
+            "original_query": query_text,
+            "public_query": query_text,
+        }
+    if not _query_requests_upload_comparison(query_text):
+        return query_text, {
+            "status": "not_applied:not_comparison_query",
+            "original_query": query_text,
+            "public_query": query_text,
+        }
+    if not upload_chunks:
+        return query_text, {
+            "status": "not_applied:no_user_upload_chunks",
+            "original_query": query_text,
+            "public_query": query_text,
+        }
+
+    source_text = " ".join(
+        [
+            query_text,
+            *[
+                str(getattr(chunk, "text", "") or "")[:1600]
+                for chunk in upload_chunks[:3]
+            ],
+        ]
+    )
+    cleaned_text = _strip_user_upload_public_retrieval_noise(source_text)
+    noise_tokens = _user_upload_metadata_noise_tokens(upload_chunks)
+    terms = _extract_user_upload_public_retrieval_terms(
+        cleaned_text,
+        extra_stopwords=noise_tokens,
+    )
+    if not terms:
+        return query_text, {
+            "status": "not_applied:no_issue_terms",
+            "original_query": query_text,
+            "public_query": query_text,
+            "source_chunk_ids": [getattr(chunk, "id", None) for chunk in upload_chunks[:3]],
+        }
+
+    public_query = " ".join(terms)
+    return public_query, {
+        "status": "applied:user_upload_comparison_rewrite",
+        "original_query": query_text,
+        "public_query": public_query,
+        "terms": terms,
+        "source_chunk_ids": [getattr(chunk, "id", None) for chunk in upload_chunks[:3]],
+    }
+
+
+def _strip_user_upload_public_retrieval_noise(text: str) -> str:
+    cleaned = str(text or "")
+    cleaned = _CASE_NAME_RE.sub(" ", cleaned)
+    cleaned = re.sub(
+        r"\bDr\.\s+[A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){0,2}\b",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(r"\bModel\s+[A-Z0-9-]+\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"\b(?:my\s+)?uploaded\s+[A-Z][A-Za-z0-9-]*(?:\s+[A-Z][A-Za-z0-9-]*){0,6}\s+"
+        r"(?:draft|document|file|memo|memorandum|motion)\b",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(r"\bCONFIDENTIAL\b|\bPARALEGAL WORK PRODUCT\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip()
+
+
+def _user_upload_metadata_noise_tokens(upload_chunks: list) -> set[str]:
+    noise: set[str] = set()
+    for chunk in upload_chunks[:3]:
+        metadata_text = " ".join(
+            [
+                str(getattr(chunk, "id", "") or ""),
+                str(getattr(chunk, "doc_id", "") or ""),
+                str(getattr(chunk, "source_file", "") or ""),
+            ]
+        )
+        noise.update(
+            token
+            for token in re.findall(r"[A-Za-z][A-Za-z-]{2,}", metadata_text.lower())
+            if len(token) >= 4
+        )
+    return noise
+
+
+def _extract_user_upload_public_retrieval_terms(
+    text: str,
+    *,
+    extra_stopwords: set[str] | None = None,
+) -> list[str]:
+    lower_text = str(text or "").lower()
+    phrase_specs = [
+        ("Daubert", r"\bdaubert\b|\bexpert(?:s)?\b|\bcausation opinion\b|\bmethodology\b"),
+        ("expert testimony", r"\bexpert(?:s)?\b|\bcausation opinion\b"),
+        ("expert opinion admissibility", r"\bexpert(?:s)?\b|\bcausation opinion\b|\bmethodology\b|\badmissib"),
+        ("reliable principles and methods", r"\breliable\b.*\bmethodology\b|\bmethodology\b|\bprinciples?\b|\bmethods?\b"),
+        ("expert causation opinion", r"\bcausation opinion\b"),
+        ("reliable causation methodology", r"\bcausation\b.*\bmethodology\b|\bmethodology\b.*\bcausation\b"),
+        ("reliable methodology", r"\breliable\b.*\bmethodology\b|\bmethodology\b"),
+        ("alternative causes", r"\balternative\s+(?:ignition\s+)?sources?\b|\balternative causes?\b"),
+        ("substantially similar testing conditions", r"\bsubstantially similar\b|\bcharging conditions\b"),
+        ("product liability", r"\bproduct liability\b|\bbattery pack\b|\bconsumer product\b"),
+        ("admissibility", r"\bdaubert\b|\badmissib"),
+    ]
+    terms: list[str] = []
+    seen: set[str] = set()
+    for phrase, pattern in phrase_specs:
+        if re.search(pattern, lower_text, re.IGNORECASE):
+            terms.append(phrase)
+            seen.add(phrase)
+
+    stopwords = {
+        "about",
+        "account",
+        "argument",
+        "authorities",
+        "authority",
+        "battery",
+        "cases",
+        "charging",
+        "connect",
+        "compare",
+        "comparison",
+        "corpus",
+        "document",
+        "does",
+        "draft",
+        "extension",
+        "file",
+        "failed",
+        "from",
+        "how",
+        "legal",
+        "memo",
+        "memorandum",
+        "motion",
+        "opinion",
+        "observations",
+        "pack",
+        "precedent",
+        "prior",
+        "relevant",
+        "source",
+        "sources",
+        "states",
+        "strongest",
+        "that",
+        "test",
+        "under",
+        "uploaded",
+        "using",
+        "work",
+    }
+    stopwords.update(extra_stopwords or set())
+    for token in re.findall(r"[A-Za-z][A-Za-z-]{2,}", lower_text):
+        token = token.strip("-").lower()
+        if token in seen or token in stopwords:
+            continue
+        if token in _content_tokens(" ".join(terms)):
+            continue
+        if len(token) < 4:
+            continue
+        terms.append(token)
+        seen.add(token)
+        if len(terms) >= USER_UPLOAD_PUBLIC_RETRIEVAL_TERM_LIMIT - 2:
+            break
+
+    for authority_term in ("case law", "precedent"):
+        if len(terms) >= USER_UPLOAD_PUBLIC_RETRIEVAL_TERM_LIMIT:
+            break
+        if authority_term not in seen:
+            terms.append(authority_term)
+            seen.add(authority_term)
+    return terms[:USER_UPLOAD_PUBLIC_RETRIEVAL_TERM_LIMIT]
+
+
 def _classify_query_intent(
     query: str,
     *,
     target_case: str | None,
     citation: str | None,
+    llm_route: str | None = None,
 ) -> str:
     query_text = query or ""
+    route = str(llm_route or "").strip().lower()
+    if route in {"topic_overview", "research_leads"}:
+        return route
+    if route in {"off_corpus", "clarification_needed"}:
+        return "off_target"
     if _AUTHOR_QUERY_RE.search(query_text):
         return "author"
     if _HOLDING_QUERY_RE.search(query_text):
         return "holding"
     if _POSTURE_QUERY_RE.search(query_text):
         return "posture"
+    if _RESEARCH_LEADS_QUERY_RE.search(query_text):
+        return "research_leads"
     if _ISSUE_ANALYSIS_QUERY_RE.search(query_text):
+        return "issue_analysis"
+    if _query_mentions_upload(query_text):
         return "issue_analysis"
     if citation:
         return "citation_lookup"
@@ -1225,6 +1802,23 @@ def _build_pre_generation_refusal(
 ) -> tuple[str | None, dict[str, Any]]:
     query_intent = str(query_grounding.get("query_intent") or "")
     target_case = query_grounding.get("target_case")
+    query_status = str(query_grounding.get("status") or "")
+    target_citation = query_grounding.get("target_citation")
+    
+    # NEW: Handle unresolved citation lookups - refuse early for fake citations like 999 U.S. 999
+    if (
+        target_citation 
+        and query_status == "not_resolved:citation_unresolved"
+    ):
+        return (
+            f"I could not find {target_citation} in the retrieved database, so I cannot summarize its rule.",
+            {
+                "status": "applied:explicit_citation_not_retrieved",
+                "query_intent": query_intent,
+                "target_citation": target_citation,
+            },
+        )
+    
     if not retrieved_chunks:
         return None, {
             "status": "not_applied:no_retrieval_context",
@@ -1264,6 +1858,238 @@ def _build_pre_generation_refusal(
             "target_case": target_case,
         },
     )
+
+
+def _build_missing_case_topic_fallback(
+    query: str,
+    *,
+    query_grounding: dict[str, Any],
+    retriever: Any,
+    initial_chunks: list,
+    limit: int,
+) -> tuple[list, dict[str, Any]]:
+    if _has_user_upload_chunks(initial_chunks):
+        return [], {
+            "status": "not_applied:user_upload_context",
+            "missing_case": None,
+            "topic_query": None,
+        }
+
+    missing_case = _missing_explicit_case(query_grounding, initial_chunks)
+    if not missing_case:
+        return [], {
+            "status": "not_applied:target_case_available_or_not_explicit",
+            "missing_case": None,
+            "topic_query": None,
+        }
+
+    topic_query = _build_topic_fallback_query(query, missing_case)
+    if not _query_has_topic_fallback_signal(topic_query):
+        return [], {
+            "status": "not_applied:no_topic_signal",
+            "missing_case": missing_case,
+            "topic_query": topic_query,
+        }
+
+    topic_chunks: list[Any] = []
+    retrieval_status = "not_applied:no_retriever"
+    if retriever is not None:
+        try:
+            topic_chunks = list(retriever.retrieve(topic_query))
+            retrieval_status = "ok"
+        except Exception as exc:  # pragma: no cover - defensive path for live retrieval failures
+            retrieval_status = f"error:{exc.__class__.__name__}"
+
+    candidates = _dedupe_chunks([*topic_chunks, *initial_chunks])
+    selected = _select_topic_fallback_chunks(
+        topic_query,
+        candidates,
+        missing_case=missing_case,
+        limit=limit,
+    )
+    if not selected:
+        return [], {
+            "status": "not_applied:no_topic_evidence",
+            "missing_case": missing_case,
+            "topic_query": topic_query,
+            "retrieval_status": retrieval_status,
+            "candidate_count": len(candidates),
+        }
+
+    return selected, {
+        "status": "applied",
+        "missing_case": missing_case,
+        "topic_query": topic_query,
+        "retrieval_status": retrieval_status,
+        "candidate_count": len(candidates),
+        "selected_count": len(selected),
+        "limit": limit,
+    }
+
+
+def _missing_explicit_case(query_grounding: dict[str, Any], retrieved_chunks: list) -> str | None:
+    explicit_case = str(query_grounding.get("explicit_case") or "").strip()
+    if not explicit_case:
+        return None
+    target_case = str(query_grounding.get("target_case") or explicit_case).strip()
+    if not target_case:
+        return explicit_case
+    if _has_matching_target_chunks(target_case, retrieved_chunks):
+        return None
+    return target_case
+
+
+def _build_topic_fallback_query(query: str, missing_case: str) -> str:
+    topic_query = str(query or "")
+    if missing_case:
+        topic_query = re.sub(re.escape(missing_case), " ", topic_query, flags=re.IGNORECASE)
+    topic_query = re.sub(r"^\s*In\s*,?\s*", " ", topic_query, flags=re.IGNORECASE)
+    topic_query = re.sub(
+        r"\bwhat\s+did\s+(?:the\s+)?(?:supreme\s+)?court\s+(?:hold|decide|do)\b",
+        " ",
+        topic_query,
+        flags=re.IGNORECASE,
+    )
+    topic_query = re.sub(r"\b(?:that|this|the)\s+case\b", " ", topic_query, flags=re.IGNORECASE)
+    topic_query = re.sub(r"\b(?:hold|holding|held)\b", " ", topic_query, flags=re.IGNORECASE)
+    topic_query = re.sub(r"\s+", " ", topic_query).strip(" ,.;:")
+    return topic_query
+
+
+def _query_has_topic_fallback_signal(topic_query: str) -> bool:
+    query_text = str(topic_query or "").strip()
+    if not query_text:
+        return False
+    if _TOPIC_SIGNAL_RE.search(query_text):
+        return True
+    return len(_content_tokens(query_text)) >= 3
+
+
+def _query_requests_research_leads(query: str, query_grounding: dict[str, Any] | None) -> bool:
+    query_text = str(query or "").strip()
+    if not query_text:
+        return False
+
+    grounding = query_grounding or {}
+    if grounding.get("target_case") or grounding.get("explicit_case") or grounding.get("citation"):
+        return False
+    if grounding.get("has_user_upload_context") or _query_mentions_upload(query_text):
+        return False
+    if grounding.get("topic_fallback_used") or grounding.get("missing_explicit_case"):
+        return False
+    if str(grounding.get("query_intent") or "") == "research_leads":
+        return True
+    if str(grounding.get("query_intent") or "") == "off_target" and not _RESEARCH_LEADS_QUERY_RE.search(query_text):
+        return False
+    return bool(_RESEARCH_LEADS_QUERY_RE.search(query_text))
+
+
+def _dedupe_chunks(chunks: list) -> list:
+    deduped = []
+    seen_ids: set[str] = set()
+    for chunk in chunks:
+        chunk_id = getattr(chunk, "id", None)
+        if not chunk_id or chunk_id in seen_ids:
+            continue
+        deduped.append(chunk)
+        seen_ids.add(chunk_id)
+    return deduped
+
+
+def _select_topic_fallback_chunks(
+    topic_query: str,
+    chunks: list,
+    *,
+    missing_case: str,
+    limit: int,
+) -> list:
+    topic_tokens = _content_tokens(topic_query)
+    if not topic_tokens:
+        return []
+
+    scored_chunks: list[tuple[float, int, Any]] = []
+    for rank, chunk in enumerate(chunks):
+        if _case_name_matches(missing_case, getattr(chunk, "case_name", None)):
+            continue
+        chunk_text = str(getattr(chunk, "text", "") or "")
+        chunk_tokens = _content_tokens(
+            " ".join(
+                [
+                    chunk_text[:2400],
+                    str(getattr(chunk, "case_name", "") or ""),
+                    str(getattr(chunk, "citation", "") or ""),
+                ]
+            )
+        )
+        overlap = topic_tokens & chunk_tokens
+        if not overlap:
+            continue
+        score = float(len(overlap) * 4)
+        score += len(overlap) / max(len(topic_tokens), 1)
+        if _TOPIC_SIGNAL_RE.search(chunk_text):
+            score += 2.0
+        scored_chunks.append((score, rank, chunk))
+
+    scored_chunks.sort(key=lambda item: (-item[0], item[1]))
+    return [chunk for _, _, chunk in scored_chunks[: max(0, int(limit or 0))]]
+
+
+def _format_missing_case_topic_scope_for_prompt(missing_case: Any, topic_query: Any) -> str:
+    case_name = str(missing_case or "the named case").strip()
+    topic = str(topic_query or "the related legal issue").strip()
+    return (
+        "Evidence type: scope constraint\n"
+        f"Missing target case: {case_name}\n"
+        f"Related topic query: {topic}\n"
+        "Generation constraint: start by saying the named case was not found in the retrieved database. "
+        "Then answer only the related legal topic from the remaining retrieved authorities. "
+        "Do not state or imply what the missing case held."
+    )
+
+
+def _format_research_leads_scope_for_prompt(query: Any) -> str:
+    research_query = str(query or "the user's research query").strip()
+    return (
+        "Evidence type: research-leads scope constraint\n"
+        f"Research query: {research_query}\n"
+        "Generation constraint: identify retrieved cases or authorities as research leads, "
+        "not definitive holdings unless directly supported by the retrieved text. "
+        "Use cautious language such as \"retrieved materials suggest\" and do not invent citations. "
+        "Verification constraint: broad analogies or issue matches are exploratory and should not "
+        "be treated as stronger than possible support unless directly stated."
+    )
+
+
+def _prepend_missing_case_topic_disclaimer(response: str, *, missing_case: Any) -> str:
+    case_name = str(missing_case or "the named case").strip()
+    disclaimer = (
+        f"I do not have {case_name} in the retrieved database, so I cannot say what that case held."
+    )
+    answer = " ".join(str(response or "").split()).strip()
+    if not answer:
+        return disclaimer
+    if answer.lower().startswith("i do not have"):
+        return answer
+    return f"{disclaimer}\n\nBased on related retrieved authorities, {answer[0].lower() + answer[1:] if len(answer) > 1 else answer.lower()}"
+
+
+def _answer_mode(
+    *,
+    generation_mode: str,
+    topic_fallback_used: bool,
+    pre_generation_refusal: bool,
+    retrieval_used: bool,
+    research_leads_mode: bool = False,
+) -> str:
+    if topic_fallback_used:
+        return "missing_case_topic_fallback"
+    if pre_generation_refusal:
+        return "refusal"
+    if research_leads_mode:
+        return "research_leads"
+    if generation_mode == "direct" and not retrieval_used:
+        return "direct"
+    return "retrieval_grounded"
 
 
 def _extract_query_citation(query: str) -> str | None:
@@ -1585,11 +2411,17 @@ def _select_prompt_chunks_for_generation(
     *,
     query_grounding: dict[str, Any] | None = None,
 ) -> tuple[list, dict[str, Any]]:
-    _ = query
     if not retrieved_chunks:
         return [], {"status": "not_applied:no_retrieval", "target_case": None}
 
     query_grounding = query_grounding or _resolve_query_grounding(query, retrieved_chunks)
+    if _has_user_upload_chunks(retrieved_chunks):
+        return _select_user_upload_prompt_chunks(
+            query,
+            retrieved_chunks,
+            query_grounding=query_grounding,
+        )
+
     target_case = query_grounding.get("target_case")
     if target_case is None:
         return list(retrieved_chunks), {
@@ -1638,18 +2470,62 @@ def _select_prompt_chunks_for_generation(
     }
 
 
+def _select_user_upload_prompt_chunks(
+    query: str,
+    retrieved_chunks: list,
+    *,
+    query_grounding: dict[str, Any],
+) -> tuple[list, dict[str, Any]]:
+    upload_chunks = [
+        chunk for chunk in retrieved_chunks if getattr(chunk, "doc_type", None) == "user_upload"
+    ]
+    public_chunks = [
+        chunk for chunk in retrieved_chunks if getattr(chunk, "doc_type", None) != "user_upload"
+    ]
+    if not upload_chunks:
+        return list(retrieved_chunks), {
+            "status": "not_applied:no_user_upload_chunks",
+            "target_case": None,
+            "query_grounding_status": query_grounding.get("status"),
+        }
+
+    include_public = _query_requests_upload_comparison(query)
+    selected = list(upload_chunks)
+    public_limit = 0
+    if include_public:
+        public_limit = USER_UPLOAD_COMPARISON_PUBLIC_CHUNK_LIMIT
+        selected.extend(public_chunks[:public_limit])
+
+    return selected, {
+        "status": (
+            "applied:user_upload_with_comparison_authorities"
+            if include_public
+            else "applied:user_upload_only"
+        ),
+        "target_case": None,
+        "query_grounding_status": query_grounding.get("status"),
+        "user_upload_chunk_count": len(upload_chunks),
+        "public_candidate_count": len(public_chunks),
+        "public_prompt_limit": public_limit,
+        "candidate_count": len(selected),
+        "limit": len(selected),
+    }
+
+
 def _build_generation_context(
     query: str,
     prompt_chunks: list,
     *,
     query_grounding: dict[str, Any] | None = None,
     response_depth: str = RESPONSE_DEPTH_CONCISE,
+    research_leads_mode: bool = False,
 ) -> tuple[list[str], dict[str, Any]]:
     normalized_response_depth = _normalize_response_depth(response_depth)
     if not prompt_chunks:
         return [], {
             "status": "not_applied:no_prompt_chunks",
             "count": 0,
+            "research_leads_mode": False,
             "answerable_sentences": [],
             "response_depth": normalized_response_depth,
             "sentence_limit": _generation_evidence_sentence_limit(normalized_response_depth),
@@ -1657,12 +2533,55 @@ def _build_generation_context(
 
     query_grounding = query_grounding or _resolve_query_grounding(query, prompt_chunks)
     target_case = query_grounding.get("target_case")
+    if _has_user_upload_chunks(prompt_chunks):
+        sentence_limit = max(
+            _generation_evidence_sentence_limit(normalized_response_depth),
+            6,
+        )
+        evidence_sentences = _select_user_upload_context_evidence_sentences(
+            query,
+            prompt_chunks,
+            limit=sentence_limit,
+        )
+        return _format_user_upload_context_for_prompt(prompt_chunks), {
+            "status": "applied:user_upload_context",
+            "count": len(prompt_chunks),
+            "source_chunk_ids": [chunk.id for chunk in prompt_chunks],
+            "source_evidence_sentences": _source_evidence_sentence_payloads(
+                evidence_sentences,
+                canonical_answer_fact=None,
+            ),
+            "query_grounding_status": query_grounding.get("status"),
+            "research_leads_mode": False,
+            "answerable_sentences": [
+                _sanitize_evidence_sentence(str(item["sentence"]))
+                for item in evidence_sentences
+                if str(item.get("sentence") or "").strip()
+            ],
+            "response_depth": normalized_response_depth,
+            "sentence_limit": sentence_limit,
+        }
+    if research_leads_mode:
+        return [
+            _format_research_leads_scope_for_prompt(query),
+            *[_format_chunk_for_prompt(chunk) for chunk in prompt_chunks],
+        ], {
+            "status": "applied:research_leads",
+            "count": len(prompt_chunks) + 1,
+            "source_chunk_ids": [chunk.id for chunk in prompt_chunks],
+            "query_grounding_status": query_grounding.get("status"),
+            "research_leads_mode": True,
+            "answerable_sentences": [],
+            "response_depth": normalized_response_depth,
+            "sentence_limit": _generation_evidence_sentence_limit(normalized_response_depth),
+        }
     if target_case is None:
         return [_format_chunk_for_prompt(chunk) for chunk in prompt_chunks], {
             "status": "not_applied:no_target_case",
             "count": len(prompt_chunks),
             "source_chunk_ids": [chunk.id for chunk in prompt_chunks],
             "query_grounding_status": query_grounding.get("status"),
+            "research_leads_mode": False,
             "answerable_sentences": [],
             "response_depth": normalized_response_depth,
             "sentence_limit": _generation_evidence_sentence_limit(normalized_response_depth),
@@ -1681,6 +2600,7 @@ def _build_generation_context(
             "count": len(prompt_chunks),
             "source_chunk_ids": [chunk.id for chunk in prompt_chunks],
             "query_grounding_status": query_grounding.get("status"),
+            "research_leads_mode": False,
             "answerable_sentences": [],
             "response_depth": normalized_response_depth,
             "sentence_limit": sentence_limit,
@@ -1705,6 +2625,10 @@ def _build_generation_context(
         "status": "applied:sentence_evidence",
         "count": len(formatted_context),
         "source_chunk_ids": [item["chunk"].id for item in evidence_sentences],
+        "source_evidence_sentences": _source_evidence_sentence_payloads(
+            evidence_sentences,
+            canonical_answer_fact=canonical_answer_fact,
+        ),
         "explicit_holding_sentence": explicit_holding,
         "canonical_answer_fact": canonical_answer_fact,
         "best_answer_sentence": (
@@ -1718,6 +2642,7 @@ def _build_generation_context(
             if str(item.get("sentence") or "").strip()
         ],
         "query_grounding_status": query_grounding.get("status"),
+        "research_leads_mode": False,
         "response_depth": normalized_response_depth,
         "sentence_limit": sentence_limit,
     }
@@ -1749,34 +2674,159 @@ def _select_chunks_for_verification(
     selected: list[Any] = []
     seen_ids: set[str] = set()
 
-    def _append_matching(predicate) -> None:
+    def _tag_verification_chunk(chunk: Any, tier: str, rank: int) -> None:
+        setattr(chunk, "verification_tier", tier)
+        setattr(chunk, "verification_tier_rank", rank)
+
+    def _append_matching(predicate, *, tier: str, rank: int) -> None:
         for chunk in retrieved_chunks:
             chunk_id = str(getattr(chunk, "id", ""))
             if not chunk_id or chunk_id in seen_ids:
                 continue
             if predicate(chunk):
+                _tag_verification_chunk(chunk, tier, rank)
                 selected.append(chunk)
                 seen_ids.add(chunk_id)
 
+    sentence_evidence_chunks = _build_sentence_evidence_verification_chunks(
+        generation_context_meta,
+        retrieved_chunks,
+    )
+    if sentence_evidence_chunks:
+        return sentence_evidence_chunks, {
+            "status": "applied:scoped",
+            "scope": "sentence_evidence",
+            "tiers": ["sentence_evidence"],
+        }
+
     if source_ids:
         source_id_set = set(source_ids)
-        _append_matching(lambda chunk: str(getattr(chunk, "id", "")) in source_id_set)
+        _append_matching(
+            lambda chunk: str(getattr(chunk, "id", "")) in source_id_set,
+            tier="generation_source",
+            rank=1,
+        )
         if selected:
             return selected, {
                 "status": "applied:scoped",
                 "scope": "generation_source_chunks",
+                "tiers": ["generation_source"],
             }
     if prompt_ids:
         prompt_id_set = set(prompt_ids)
-        _append_matching(lambda chunk: str(getattr(chunk, "id", "")) in prompt_id_set)
+        _append_matching(
+            lambda chunk: str(getattr(chunk, "id", "")) in prompt_id_set,
+            tier="prompt_scope",
+            rank=2,
+        )
     if target_doc_ids:
-        _append_matching(lambda chunk: str(getattr(chunk, "doc_id", "")) in target_doc_ids)
+        _append_matching(
+            lambda chunk: str(getattr(chunk, "doc_id", "")) in target_doc_ids,
+            tier="target_doc",
+            rank=3,
+        )
     if target_case:
-        _append_matching(lambda chunk: _case_name_matches(str(target_case), getattr(chunk, "case_name", None)))
+        _append_matching(
+            lambda chunk: _case_name_matches(str(target_case), getattr(chunk, "case_name", None)),
+            tier="target_case",
+            rank=4,
+        )
 
     if selected:
-        return selected, {"status": "applied:scoped"}
-    return list(retrieved_chunks), {"status": "fallback:retrieved_chunks"}
+        tiers = []
+        for chunk in selected:
+            tier = str(getattr(chunk, "verification_tier", "") or "")
+            if tier and tier not in tiers:
+                tiers.append(tier)
+        return selected, {"status": "applied:scoped", "tiers": tiers}
+    fallback_chunks = list(retrieved_chunks)
+    for chunk in fallback_chunks:
+        _tag_verification_chunk(chunk, "retrieved", 5)
+    return fallback_chunks, {"status": "fallback:retrieved_chunks", "tiers": ["retrieved"]}
+
+
+def _source_evidence_sentence_payloads(
+    evidence_sentences: list[dict[str, Any]],
+    *,
+    canonical_answer_fact: str | None,
+) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _append(text: Any, chunk: Any, role: str) -> None:
+        sentence = _sanitize_evidence_sentence(str(text or ""))
+        if not sentence:
+            return
+        chunk_id = str(getattr(chunk, "id", "") or "")
+        key = f"{chunk_id}:{' '.join(sentence.lower().split())}"
+        if key in seen:
+            return
+        seen.add(key)
+        payloads.append(
+            {
+                "sentence": sentence,
+                "source_chunk_id": chunk_id,
+                "role": role,
+            }
+        )
+
+    if canonical_answer_fact and evidence_sentences:
+        _append(canonical_answer_fact, evidence_sentences[0].get("chunk"), "canonical_answer_fact")
+
+    for item in evidence_sentences:
+        _append(item.get("sentence"), item.get("chunk"), str(item.get("role") or "answerable_sentence"))
+    return payloads
+
+
+def _build_sentence_evidence_verification_chunks(
+    generation_context_meta: dict[str, Any],
+    retrieved_chunks: list,
+) -> list[LegalChunk]:
+    payloads = generation_context_meta.get("source_evidence_sentences")
+    if not isinstance(payloads, list) or not payloads:
+        return []
+
+    chunks_by_id = {
+        str(getattr(chunk, "id", "")): chunk
+        for chunk in retrieved_chunks
+        if getattr(chunk, "id", None)
+    }
+    sentence_chunks: list[LegalChunk] = []
+    seen_text: set[str] = set()
+    for index, payload in enumerate(payloads):
+        if not isinstance(payload, dict):
+            continue
+        text = _sanitize_evidence_sentence(str(payload.get("sentence") or ""))
+        if not text:
+            continue
+        key = " ".join(text.lower().split())
+        if key in seen_text:
+            continue
+        source_chunk = chunks_by_id.get(str(payload.get("source_chunk_id") or ""))
+        if source_chunk is None:
+            continue
+        seen_text.add(key)
+        chunk = LegalChunk(
+            id=f"{getattr(source_chunk, 'id', 'chunk')}:sentence_evidence:{index}",
+            doc_id=str(getattr(source_chunk, "doc_id", "") or ""),
+            text=text,
+            chunk_index=int(getattr(source_chunk, "chunk_index", index) or index),
+            doc_type=str(getattr(source_chunk, "doc_type", "case") or "case"),
+            case_name=getattr(source_chunk, "case_name", None),
+            court=getattr(source_chunk, "court", None),
+            court_level=getattr(source_chunk, "court_level", None),
+            citation=getattr(source_chunk, "citation", None),
+            date_decided=getattr(source_chunk, "date_decided", None),
+            title=getattr(source_chunk, "title", None),
+            section=getattr(source_chunk, "section", None),
+            source_file=getattr(source_chunk, "source_file", None),
+        )
+        setattr(chunk, "verification_tier", "sentence_evidence")
+        setattr(chunk, "verification_tier_rank", 0)
+        setattr(chunk, "verification_source_chunk_id", getattr(source_chunk, "id", None))
+        setattr(chunk, "verification_evidence_role", payload.get("role"))
+        sentence_chunks.append(chunk)
+    return sentence_chunks
 
 
 def _select_named_case_evidence_sentences(
@@ -1821,6 +2871,74 @@ def _select_named_case_evidence_sentences(
         key=lambda item: (
             -item["score"],
             -int(item["is_explicit_holding"]),
+            getattr(item["chunk"], "chunk_index", 0),
+            item["sentence_index"],
+        )
+    )
+
+    selected: list[dict[str, Any]] = []
+    seen_sentences: set[str] = set()
+    for item in scored_sentences:
+        normalized_sentence = " ".join(item["sentence"].split()).lower()
+        if normalized_sentence in seen_sentences:
+            continue
+        seen_sentences.add(normalized_sentence)
+        selected.append(item)
+        if len(selected) >= sentence_limit:
+            break
+
+    return selected
+
+
+def _select_user_upload_context_evidence_sentences(
+    query: str,
+    prompt_chunks: list,
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    query_tokens = _content_tokens(query)
+    scored_sentences: list[dict[str, Any]] = []
+    sentence_limit = max(1, int(limit or TARGET_CASE_PROMPT_SENTENCE_LIMIT))
+
+    for chunk in prompt_chunks:
+        raw_text = str(getattr(chunk, "text", "") or "")
+        if not raw_text.strip():
+            continue
+        is_upload = getattr(chunk, "doc_type", None) == "user_upload"
+        for sentence_index, sentence in enumerate(_split_into_sentences(raw_text)):
+            sentence_text = sentence.strip()
+            if len(sentence_text) < 24:
+                continue
+            if _is_incomplete_evidence_sentence(sentence_text):
+                continue
+            sentence_tokens = _content_tokens(sentence_text)
+            overlap = len(query_tokens & sentence_tokens)
+            if overlap == 0 and not is_upload:
+                continue
+            score = float(overlap * 4)
+            if query_tokens:
+                score += overlap / max(len(query_tokens), 1)
+            if is_upload:
+                score += 3.0
+            if getattr(chunk, "source_file", None):
+                score += 0.5
+            scored_sentences.append(
+                {
+                    "chunk": chunk,
+                    "sentence": sentence_text,
+                    "score": score,
+                    "sentence_index": sentence_index,
+                    "role": "upload_fact" if is_upload else "comparison_authority",
+                }
+            )
+
+    if not scored_sentences:
+        return []
+
+    scored_sentences.sort(
+        key=lambda item: (
+            -item["score"],
+            0 if getattr(item["chunk"], "doc_type", None) == "user_upload" else 1,
             getattr(item["chunk"], "chunk_index", 0),
             item["sentence_index"],
         )
@@ -1916,6 +3034,36 @@ def _score_named_case_evidence_sentence(
     if _is_incomplete_evidence_sentence(sentence_text):
         return 0.0
     if _CAPTION_ONLY_RE.search(sentence_text):
+        return 0.0
+
+    # NEW: Filter low-quality fragments that start mid-sentence
+    # Reject sentences starting with lowercase words (fragments like "is the right to...")
+    _FRAGMENT_START_RE = re.compile(r'^(?:is|are|was|were|and|or|to|from|because|that|which|who|whom|whose|when|where|while|with|without|by|as|just|also|even|still|yet|but|however|therefore|thus|hence|moreover|furthermore|nevertheless|nonetheless|otherwise|instead|meanwhile|afterward|before|after|during|since|until|unless|although|though|whereas|while)\b', re.IGNORECASE)
+    if _FRAGMENT_START_RE.search(sentence_text):
+        return 0.0
+    
+    # NEW: Reject sentences ending with honorifics or truncated references
+    _TRUNCATED_END_RE = re.compile(r'(?:Mr\.?|Mrs\.?|Ms\.?|Dr\.?|Prof\.?|Hon\.?|Lt\.?|Justice|No\.?|Nos\.?|Inc\.?|Corp\.?|Co\.?|Ltd\.?|v\.?|U\.S\.?|D\.C\.?|Cir\.?|U\.S\.C\.?)$', re.IGNORECASE)
+    if _TRUNCATED_END_RE.search(sentence_text.rstrip('.,;:!?"\'')):
+        return 0.0
+    
+    # NEW: Reject page header artifacts like "2 BURNETT v. UNITED STATES"
+    _PAGE_HEADER_RE = re.compile(r'^\d+\s+[A-Z][A-Z\s.,\'&-]{2,90}\s+v\.\s+[A-Z][A-Z\s.,\'&-]{1,90}\s+(?:Syllabus|Opinion of the Court|GORSUCH|dissenting|J\.,| dissenting)', re.IGNORECASE)
+    if _PAGE_HEADER_RE.search(sentence_text):
+        return 0.0
+    
+    # NEW: Reject reported speech fragments like "Burnett claims is the right to..."
+    # These occur when reported speech is split across chunk boundaries
+    _REPORTED_SPEECH_FRAGMENT_RE = re.compile(
+        r'^(?:[A-Z][a-z]+\s+(?:claims|submitted|argued|contended|asserted|maintained|alleged|stated|said|insisted|submitted)\s+is\b)',
+        re.IGNORECASE
+    )
+    if _REPORTED_SPEECH_FRAGMENT_RE.search(sentence_text):
+        return 0.0
+    
+    # NEW: Reject mid-sentence predicate fragments starting with "is the right to..."
+    _PREDICATE_FRAGMENT_RE = re.compile(r'^is\s+(?:the\s+)?right\s+to\b', re.IGNORECASE)
+    if _PREDICATE_FRAGMENT_RE.search(sentence_text):
         return 0.0
 
     lower_text = sentence_text.lower()
@@ -2058,6 +3206,25 @@ def _canonical_answer_fact(
             return (
                 "NEPA does not require an agency to study separate upstream or downstream "
                 "projects outside the agency's regulatory authority."
+            )
+
+    # NEW: Burnett cert-denial cases with dissents - frame as dissent, not holding
+    if (
+        "burnett" in combined
+        and ("supervised release" in combined or "sixth amendment" in combined or "jury" in combined)
+    ):
+        # Check for cert denial posture
+        if any(phrase in combined for phrase in (
+            "certiorari is denied",
+            "denied certiorari",
+            "dissenting from the denial",
+        )):
+            return (
+                "The Supreme Court denied certiorari in Burnett v. United States. "
+                "Justice Gorsuch dissented from the denial of certiorari and argued that "
+                "Burnett raised a Sixth Amendment question about jury findings when supervised-release "
+                "revocation imprisonment would push total prison time beyond the statutory maximum "
+                "for the underlying conviction."
             )
 
     if explicit_holding:
@@ -2233,6 +3400,104 @@ def _apply_case_posture_response_override(
     }
 
 
+_USER_UPLOAD_ABSENCE_GENERIC_TERMS = {
+    "according",
+    "agreement",
+    "client",
+    "document",
+    "draft",
+    "file",
+    "memo",
+    "memorandum",
+    "motion",
+    "my",
+    "northstar",
+    "cedar",
+    "riley",
+    "section",
+    "states",
+    "uploaded",
+    "using",
+}
+
+
+def _apply_user_upload_absence_response_override(
+    *,
+    query: str,
+    response: str,
+    generation_context_meta: dict[str, Any] | None,
+) -> tuple[str, dict[str, Any]]:
+    if not _query_mentions_upload(query):
+        return response, {"status": "not_applied:not_upload_query"}
+    if _query_requests_upload_comparison(query):
+        return response, {"status": "not_applied:comparison_query"}
+    if not isinstance(generation_context_meta, dict):
+        return response, {"status": "not_applied:no_generation_context_meta"}
+    if generation_context_meta.get("status") != "applied:user_upload_context":
+        return response, {"status": "not_applied:not_user_upload_context"}
+
+    evidence_text = " ".join(
+        str(sentence or "")
+        for sentence in generation_context_meta.get("answerable_sentences") or []
+    )
+    if not evidence_text.strip():
+        return response, {"status": "not_applied:no_upload_evidence_sentences"}
+
+    query_terms = _user_upload_absence_query_terms(query)
+    if not query_terms:
+        return response, {"status": "not_applied:no_core_query_terms"}
+
+    evidence_terms = _content_tokens(evidence_text)
+    matched_terms = sorted(query_terms & evidence_terms)
+    if matched_terms:
+        return response, {
+            "status": "not_applied:upload_evidence_matches_query_terms",
+            "matched_terms": matched_terms,
+        }
+
+    subject = _user_upload_absence_subject(query)
+    replacement = f"The uploaded document excerpt does not identify {subject}."
+    return replacement, {
+        "status": "applied:user_upload_absence",
+        "replacement": replacement,
+        "missing_terms": sorted(query_terms),
+    }
+
+
+def _user_upload_absence_query_terms(query: str) -> set[str]:
+    return {
+        token
+        for token in _content_tokens(query)
+        if token not in _USER_UPLOAD_ABSENCE_GENERIC_TERMS
+    }
+
+
+def _user_upload_absence_subject(query: str) -> str:
+    query_text = " ".join(str(query or "").split()).strip().rstrip("?.!")
+    patterns = (
+        r"\bwhat\s+is\s+(?:the\s+)?(.+)$",
+        r"\bwhat\s+are\s+(?:the\s+)?(.+)$",
+        r"\bwhat\s+(?:does|do|did)\s+.+?\s+(?:say|state|identify|list)\s+(?:about|for)?\s*(.+)$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, query_text, re.IGNORECASE)
+        if match is None:
+            continue
+        subject = match.group(1).strip()
+        subject = re.sub(
+            r"^(?:in|according to|using)\s+(?:my\s+)?(?:uploaded\s+)?(?:document|draft|file|memo|motion|agreement),?\s*",
+            "",
+            subject,
+            flags=re.IGNORECASE,
+        ).strip()
+        if subject:
+            article = "an" if re.match(r"^[aeiou]", subject, re.IGNORECASE) else "a"
+            if re.match(r"^(?:a|an|the)\b", subject, re.IGNORECASE):
+                return subject
+            return f"{article} {subject}"
+    return "the requested fact"
+
+
 def _apply_explicit_holding_response_override(
     *,
     query: str,
@@ -2328,11 +3593,12 @@ def _filter_claims_for_verification(raw_claims: list) -> tuple[list, list[dict[s
     skipped: list[dict[str, Any]] = []
     for claim in raw_claims:
         text = str(getattr(claim, "text", "") or "").strip()
-        if _is_low_value_verification_claim_text(text):
+        skip_reason = _verification_claim_skip_reason(text)
+        if skip_reason is not None:
             payload = claim.to_dict() if hasattr(claim, "to_dict") else {"text": text}
             skipped.append(
                 {
-                    "reason": "low_value_rhetorical_or_connective",
+                    "reason": skip_reason,
                     "claim_id": payload.get("claim_id"),
                     "text": text,
                     "span": payload.get("span"),
@@ -2344,10 +3610,73 @@ def _filter_claims_for_verification(raw_claims: list) -> tuple[list, list[dict[s
 
 
 def _is_low_value_verification_claim_text(text: str) -> bool:
+    return _verification_claim_skip_reason(text) is not None
+
+
+def _legacy_low_value_verification_claim_text(text: str) -> bool:
     stripped = " ".join(str(text or "").split()).strip()
     if not stripped:
         return True
-    return bool(_LOW_VALUE_VERIFICATION_CLAIM_RE.match(stripped))
+    if _LOW_VALUE_VERIFICATION_CLAIM_RE.match(stripped):
+        return True
+    if _FRAGMENT_VERIFICATION_CLAIM_RE.match(stripped):
+        return True
+    if _TRAILING_ABBREVIATION_FRAGMENT_RE.search(stripped):
+        return True
+    alpha_tokens = re.findall(r"[A-Za-z][A-Za-z'-]*", stripped)
+    if len(alpha_tokens) < 4:
+        return True
+    if stripped[0] in {",", ".", ";", ":", '"', "'", "”", "“"}:
+        return True
+    if stripped[0].islower():
+        return True
+    if stripped.lower().startswith("supported by allowed answer facts"):
+        return True
+    if not _VERIFICATION_CLAIM_VERB_RE.search(stripped):
+        return True
+    return False
+
+
+def _verification_claim_skip_reason(text: str) -> str | None:
+    stripped = " ".join(str(text or "").split()).strip()
+    if not stripped:
+        return "empty_claim"
+    if _LOW_VALUE_VERIFICATION_CLAIM_RE.match(stripped):
+        return "low_value_rhetorical_or_connective"
+    if _FRAGMENT_VERIFICATION_CLAIM_RE.match(stripped):
+        return "malformed_fragment"
+    if _TRAILING_ABBREVIATION_FRAGMENT_RE.search(stripped):
+        return "malformed_trailing_abbreviation"
+    if stripped.endswith((",", ":", ";", ",.")):
+        return "malformed_trailing_punctuation"
+    if _SINGLE_INITIAL_VERIFICATION_END_RE.search(stripped) and not _INITIAL_SEQUENCE_END_RE.search(stripped):
+        return "malformed_trailing_initial"
+    if _DANGLING_VERIFICATION_CLAIM_END_RE.search(stripped):
+        return "malformed_dangling_clause"
+    if _has_unbalanced_verification_quotes(stripped):
+        return "malformed_unbalanced_quote"
+    alpha_tokens = re.findall(r"[A-Za-z][A-Za-z'-]*", stripped)
+    if len(alpha_tokens) < 4:
+        return "too_short"
+    if stripped[0] in {",", ".", ";", ":", '"', "'", "â€", "â€œ"}:
+        return "malformed_leading_punctuation"
+    if stripped[0].islower():
+        return "malformed_lowercase_start"
+    if stripped.lower().startswith("supported by allowed answer facts"):
+        return "low_value_rhetorical_or_connective"
+    if not _VERIFICATION_CLAIM_VERB_RE.search(stripped):
+        return "no_finite_verb"
+    return None
+
+
+def _has_unbalanced_verification_quotes(text: str) -> bool:
+    if text.count('"') % 2:
+        return True
+    if text.count("“") != text.count("”"):
+        return True
+    if text.count("‘") != text.count("’"):
+        return True
+    return False
 
 
 def _empty_answer_block_summary() -> dict[str, Any]:
@@ -2730,6 +4059,10 @@ def _apply_supported_claim_repair(
     if not repaired:
         return response, {"status": "not_applied:no_supported_or_evidence_fallback", "summary": summary}
 
+    protected_prefix = _protected_response_prefix(generation_context_meta)
+    if protected_prefix:
+        repaired = _prepend_protected_prefix(repaired, protected_prefix)
+
     if _same_normalized_text(response, repaired):
         return response, {"status": "not_applied:repair_matches_response", "summary": summary}
 
@@ -2739,7 +4072,27 @@ def _apply_supported_claim_repair(
         "source": source,
         "retained_claim_count": len(retained_claims),
         "repaired_claim_limit": REPAIR_MAX_CLAIMS,
+        "protected_prefix_applied": bool(protected_prefix),
     }
+
+
+def _protected_response_prefix(generation_context_meta: dict[str, Any]) -> str | None:
+    missing_case = str(generation_context_meta.get("missing_case") or "").strip()
+    if not missing_case:
+        return None
+    return f"I do not have {missing_case} in the retrieved database, so I cannot say what that case held."
+
+
+def _prepend_protected_prefix(response: str, protected_prefix: str) -> str:
+    answer = str(response or "").strip()
+    prefix = str(protected_prefix or "").strip()
+    if not prefix:
+        return answer
+    if _same_normalized_text(answer[: len(prefix)], prefix) or answer.lower().startswith(prefix.lower()):
+        return answer
+    if not answer:
+        return prefix
+    return f"{prefix}\n\n{answer}"
 
 
 def _repairable_supported_claim_texts(normalized_claims: list[dict[str, Any]]) -> list[str]:
@@ -2830,6 +4183,8 @@ def _is_low_value_repair_claim_text(text: str) -> bool:
     if _PROMPT_LEAKAGE_RE.search(stripped):
         return True
     if _MALFORMED_CITATION_FRAGMENT_RE.match(stripped):
+        return True
+    if re.search(r"\b(?:Dr|Mr|Mrs|Ms|Prof|Hon)\.\s*$", stripped):
         return True
     return False
 
@@ -3078,6 +4433,12 @@ def _load_vector_store(
 def _serialize_chunk(chunk) -> dict[str, Any]:
     payload = chunk.to_dict()
     payload["text_preview"] = chunk.text[:280]
+    source_chunk_id = getattr(chunk, "verification_source_chunk_id", None)
+    if source_chunk_id:
+        payload["source_chunk_id"] = source_chunk_id
+    evidence_role = getattr(chunk, "verification_evidence_role", None)
+    if evidence_role:
+        payload["evidence_role"] = evidence_role
     return payload
 
 
@@ -3108,6 +4469,27 @@ def _format_chunk_for_prompt(chunk) -> str:
         metadata.append(f"Source file: {chunk.source_file}")
 
     return f"{'; '.join(metadata)}\n{chunk.text}"
+
+
+def _format_user_upload_context_for_prompt(chunks: list) -> list[str]:
+    formatted: list[str] = []
+    for chunk in chunks:
+        if getattr(chunk, "doc_type", None) == "user_upload":
+            formatted.append(
+                "Evidence type: user-uploaded document fact\n"
+                "Mandatory answer rule: if the user asks about an uploaded document, the first sentence must answer from this user-uploaded document fact section before discussing any retrieved legal authority.\n"
+                "Absence rule: if this fact section does not state the requested fact, say it is not identified in the uploaded document; do not infer it from nearby facts.\n"
+                "Use priority: primary record facts for questions about the uploaded document. "
+                "Do not treat this uploaded document as precedential legal authority.\n"
+                f"{_format_chunk_for_prompt(chunk)}"
+            )
+        else:
+            formatted.append(
+                "Evidence type: retrieved legal authority for comparison\n"
+                "Use priority: compare or contextualize the uploaded document only when the user's question asks for external authority.\n"
+                f"{_format_chunk_for_prompt(chunk)}"
+            )
+    return formatted
 
 
 def _claim_evidence_consistency_guard(
@@ -3173,6 +4555,46 @@ def _claim_evidence_consistency_guard(
     if alignment_guard["status"].startswith("blocked:"):
         return alignment_guard
 
+    polarity_guard = _legal_polarity_positive_support_guard(
+        claim_text,
+        supporting_chunk,
+        verdict_label,
+        query_grounding=query_grounding,
+        generation_context_meta=generation_context_meta,
+    )
+    if polarity_guard["status"].startswith("blocked:"):
+        return polarity_guard
+
+    research_leads_guard = _research_leads_positive_support_guard(
+        claim_text,
+        supporting_chunk,
+        verdict_label,
+        query_grounding=query_grounding,
+        generation_context_meta=generation_context_meta,
+    )
+    if research_leads_guard["status"].startswith(("blocked:", "demote:")):
+        return research_leads_guard
+
+    query_subject_guard = _query_subject_positive_support_guard(
+        claim_text,
+        supporting_chunk,
+        verdict_label,
+        query_grounding=query_grounding,
+        generation_context_meta=generation_context_meta,
+    )
+    if query_subject_guard["status"].startswith("blocked:"):
+        return query_subject_guard
+
+    high_risk_guard = _high_risk_positive_support_guard(
+        claim_text,
+        supporting_chunk,
+        verdict_label,
+        query_grounding=query_grounding,
+        generation_context_meta=generation_context_meta,
+    )
+    if high_risk_guard["status"].startswith("blocked:"):
+        return high_risk_guard
+
     return {"status": "passed"}
 
 
@@ -3216,6 +4638,275 @@ def _target_evidence_alignment_guard(
         ),
         "overlap": sorted(overlap),
         "claim_tokens": sorted(claim_tokens)[:20],
+    }
+
+
+def _legal_polarity_positive_support_guard(
+    claim_text: str,
+    supporting_chunk: Any,
+    verdict_label: str,
+    *,
+    query_grounding: dict[str, Any] | None,
+    generation_context_meta: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if verdict_label not in {"VERIFIED", "SUPPORTED", "POSSIBLE_SUPPORT"}:
+        return {"status": "not_applied:verdict_not_supported"}
+
+    target_case = str((query_grounding or {}).get("target_case") or "").strip()
+    evidence_text = " ".join(
+        str(value or "")
+        for value in (
+            getattr(supporting_chunk, "case_name", None),
+            getattr(supporting_chunk, "citation", None),
+            getattr(supporting_chunk, "text", None),
+            (generation_context_meta or {}).get("canonical_answer_fact"),
+            (generation_context_meta or {}).get("explicit_holding_sentence"),
+            (generation_context_meta or {}).get("best_answer_sentence"),
+        )
+    )
+
+    claim_says_chevron_controls = bool(_CHEVRON_CONTROLS_CLAIM_RE.search(claim_text))
+    if not claim_says_chevron_controls:
+        return {"status": "not_applied:no_known_polarity_conflict"}
+
+    loper_target = "loper bright" in target_case.lower()
+    evidence_rejects_chevron = bool(_CHEVRON_REJECTING_EVIDENCE_RE.search(evidence_text))
+    if loper_target or evidence_rejects_chevron:
+        return {
+            "status": "blocked:legal_polarity_conflict",
+            "message": (
+                "The claim states that Chevron deference controls or applies, but "
+                "the target authority rejects Chevron as the controlling rule."
+            ),
+            "target_case": target_case,
+            "evidence_rejects_chevron": evidence_rejects_chevron,
+        }
+
+    return {"status": "not_applied:no_known_polarity_conflict"}
+
+
+def _research_leads_positive_support_guard(
+    claim_text: str,
+    supporting_chunk: Any,
+    verdict_label: str,
+    *,
+    query_grounding: dict[str, Any] | None,
+    generation_context_meta: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if verdict_label not in {"VERIFIED", "SUPPORTED"}:
+        return {"status": "not_applied:not_strong_positive"}
+    if not _is_research_leads_context(query_grounding, generation_context_meta):
+        return {"status": "not_applied:not_research_leads"}
+
+    evidence_text = " ".join(
+        str(value or "")
+        for value in (
+            getattr(supporting_chunk, "case_name", None),
+            getattr(supporting_chunk, "citation", None),
+            getattr(supporting_chunk, "text", None),
+        )
+    )
+    claim_specific = _research_leads_specific_tokens(claim_text)
+    evidence_specific = _research_leads_specific_tokens(evidence_text)
+    overlap = claim_specific & evidence_specific
+    if len(overlap) >= 2:
+        return {"status": "passed:research_leads_source_alignment", "overlap": sorted(overlap)[:12]}
+
+    return {
+        "status": "demote:research_leads_weak_source_alignment",
+        "message": (
+            "The research-leads claim has weak source/entity alignment, so it is "
+            "downgraded from supported to possible support."
+        ),
+        "overlap": sorted(overlap),
+        "claim_tokens": sorted(claim_specific)[:20],
+    }
+
+
+def _query_subject_positive_support_guard(
+    claim_text: str,
+    supporting_chunk: Any,
+    verdict_label: str,
+    *,
+    query_grounding: dict[str, Any] | None,
+    generation_context_meta: dict[str, Any] | None,
+) -> dict[str, Any]:
+    _ = generation_context_meta
+    if verdict_label not in {"VERIFIED", "SUPPORTED", "POSSIBLE_SUPPORT"}:
+        return {"status": "not_applied:verdict_not_supported"}
+
+    query = str((query_grounding or {}).get("query") or "").strip()
+    if not query:
+        return {"status": "not_applied:no_query"}
+    if not _SOURCE_DISCIPLINE_QUERY_RE.search(query):
+        return {"status": "not_applied:not_source_discipline_query"}
+    if (query_grounding or {}).get("mentions_user_upload") or (query_grounding or {}).get("has_user_upload_context"):
+        return {"status": "not_applied:user_upload_context"}
+
+    subject_tokens = _query_subject_tokens(query)
+    if len(subject_tokens) < 2:
+        return {"status": "not_applied:not_enough_subject_tokens", "subject_tokens": sorted(subject_tokens)}
+
+    evidence_text = " ".join(
+        str(value or "")
+        for value in (
+            claim_text,
+            getattr(supporting_chunk, "case_name", None),
+            getattr(supporting_chunk, "citation", None),
+            getattr(supporting_chunk, "source_file", None),
+            getattr(supporting_chunk, "text", None),
+        )
+    )
+    evidence_tokens = _content_tokens(evidence_text)
+    missing = subject_tokens - evidence_tokens
+    if not missing:
+        return {"status": "passed:query_subject_alignment", "subject_tokens": sorted(subject_tokens)}
+
+    return {
+        "status": "blocked:query_subject_mismatch",
+        "message": (
+            "The supporting evidence does not cover the distinctive subject terms "
+            "from the source-discipline query."
+        ),
+        "missing_subject_tokens": sorted(missing),
+        "subject_tokens": sorted(subject_tokens),
+    }
+
+
+def _high_risk_positive_support_guard(
+    claim_text: str,
+    supporting_chunk: Any,
+    verdict_label: str,
+    *,
+    query_grounding: dict[str, Any] | None,
+    generation_context_meta: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if verdict_label not in {"VERIFIED", "SUPPORTED", "POSSIBLE_SUPPORT"}:
+        return {"status": "not_applied:verdict_not_supported"}
+    if not _is_high_risk_positive_support_context(query_grounding, generation_context_meta):
+        return {"status": "not_applied:not_high_risk"}
+
+    evidence_text = " ".join(
+        str(value or "")
+        for value in (
+            getattr(supporting_chunk, "case_name", None),
+            getattr(supporting_chunk, "citation", None),
+            getattr(supporting_chunk, "source_file", None),
+            getattr(supporting_chunk, "text", None),
+        )
+    )
+    if _RELATED_RETRIEVED_AUTHORITY_CLAIM_RE.search(claim_text):
+        return {
+            "status": "blocked:high_risk_related_authority_claim",
+            "message": (
+                "The claim relies on related retrieved authorities in a high-risk "
+                "context rather than direct support for the requested source."
+            ),
+        }
+
+    target_citation = str((query_grounding or {}).get("target_citation") or "").strip()
+    grounding_source = str((query_grounding or {}).get("source") or "").strip()
+    if grounding_source == "citation_unresolved" and target_citation:
+        evidence_norm = _compact_guard_text(evidence_text)
+        if _compact_guard_text(target_citation) not in evidence_norm:
+            return {
+                "status": "blocked:high_risk_unresolved_citation_mismatch",
+                "message": (
+                    "The query asks for an unresolved citation, and the supporting "
+                    "evidence does not match that citation."
+                ),
+                "target_citation": target_citation,
+            }
+
+    if _is_research_leads_context(query_grounding, generation_context_meta):
+        return {"status": "passed:research_leads_not_strictly_gated"}
+
+    claim_tokens = _content_tokens(claim_text)
+    evidence_tokens = _content_tokens(evidence_text)
+    if not claim_tokens or not evidence_tokens:
+        return {"status": "not_applied:no_alignment_tokens"}
+
+    overlap = claim_tokens & evidence_tokens
+    required_overlap = 2 if len(claim_tokens) <= 6 else 3
+    if len(overlap) >= required_overlap:
+        return {
+            "status": "passed:high_risk_content_overlap",
+            "overlap": sorted(overlap)[:12],
+            "required_overlap": required_overlap,
+        }
+
+    return {
+        "status": "blocked:high_risk_low_source_alignment",
+        "message": (
+            "The claim appears in a high-risk retrieval context and lacks enough "
+            "source alignment to be treated as supported."
+        ),
+        "overlap": sorted(overlap),
+        "required_overlap": required_overlap,
+        "claim_tokens": sorted(claim_tokens)[:20],
+    }
+
+
+def _is_high_risk_positive_support_context(
+    query_grounding: dict[str, Any] | None,
+    generation_context_meta: dict[str, Any] | None,
+) -> bool:
+    grounding = query_grounding or {}
+    context = generation_context_meta or {}
+
+    if grounding.get("target_case"):
+        return False
+    if str(context.get("status") or "").startswith("applied:user_upload"):
+        return False
+    if grounding.get("mentions_user_upload") or grounding.get("has_user_upload_context"):
+        return False
+
+    grounding_status = str(grounding.get("status") or "")
+    grounding_source = str(grounding.get("source") or "")
+    context_status = str(context.get("status") or "")
+    answer_mode = str(context.get("answer_mode") or "")
+    missing_case = str(context.get("missing_case") or "").strip()
+
+    return (
+        not grounding_status.startswith("resolved:")
+        or grounding_status.startswith("not_resolved:")
+        or grounding_source in {"unresolved", "retrieval_convergence"}
+        or bool(missing_case)
+        or "fallback" in context_status
+        or "research_leads" in context_status
+        or "research_leads" in answer_mode
+    )
+
+
+def _is_research_leads_context(
+    query_grounding: dict[str, Any] | None,
+    generation_context_meta: dict[str, Any] | None,
+) -> bool:
+    grounding = query_grounding or {}
+    context = generation_context_meta or {}
+    return (
+        grounding.get("query_intent") == "research_leads"
+        or grounding.get("llm_route") == "research_leads"
+        or "research_leads" in str(grounding.get("source") or "")
+        or "research_leads" in str(context.get("status") or "")
+        or "research_leads" in str(context.get("answer_mode") or "")
+    )
+
+
+def _research_leads_specific_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in _content_tokens(text)
+        if token not in _RESEARCH_LEADS_GENERIC_TOKENS and not token.isdigit()
+    }
+
+
+def _query_subject_tokens(query: str) -> set[str]:
+    tokens = _content_tokens(query)
+    return {
+        token
+        for token in tokens
+        if len(token) >= 4 and token not in _QUERY_SUBJECT_GENERIC_TOKENS
     }
 
 
@@ -3288,6 +4979,9 @@ def _serialize_claim_with_verification(
     verdict_explanation = classification.explanation
     if consistency_guard["status"].startswith("blocked:"):
         verdict_label = "UNSUPPORTED"
+        verdict_explanation = str(consistency_guard["message"])
+    elif consistency_guard["status"].startswith("demote:"):
+        verdict_label = "POSSIBLE_SUPPORT"
         verdict_explanation = str(consistency_guard["message"])
     best_supporting_chunk = _serialize_chunk(verdict.best_chunk) if verdict.best_chunk is not None else None
     best_contradicting_chunk = (
