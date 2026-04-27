@@ -109,6 +109,17 @@ class NLIVerifier:
         self.support_threshold = VERIFICATION.support_threshold
         self.contradiction_threshold = VERIFICATION.contradiction_threshold
         self.authority_weights = VERIFICATION.authority_weights
+        
+        # Rhetorical contradiction detection config
+        self.rhetorical_contradiction_entailment_threshold = getattr(
+            VERIFICATION, 'rhetorical_contradiction_entailment_threshold', 0.95
+        )
+        self.rhetorical_contradiction_tier_gap = getattr(
+            VERIFICATION, 'rhetorical_contradiction_tier_gap', 2
+        )
+        self.rhetorical_contradiction_penalty_discount = getattr(
+            VERIFICATION, 'rhetorical_contradiction_penalty_discount', 0.5
+        )
 
         self._tokenizer = None
         self._model = None
@@ -435,6 +446,24 @@ class NLIVerifier:
         best_entailment = float(entailments[best_idx])
         best_contradiction = float(contradictions[best_contra_idx])
         contradiction_margin = max_contra - max_pool
+        
+        # NEW: Detect "same chunk confusion" - when best support AND best contradiction
+        # come from the same chunk, the NLI model is uncertain. Apply stricter rules.
+        same_chunk_confusion = best_idx == best_contra_idx
+        if same_chunk_confusion:
+            # When same chunk produces both high entailment and high contradiction,
+            # the model is confused. Require larger margin for valid contradiction.
+            # This prevents "possibly_supported" from conflicting signals on same evidence.
+            if best_entailment >= 0.70 and best_contradiction >= 0.60:
+                # Both scores are high - model is truly uncertain
+                # Require contradiction to be significantly higher than entailment
+                if contradiction_margin < 0.20:
+                    # Not enough margin - ignore the contradiction signal from this chunk
+                    # The entailment signal is more trustworthy when model is uncertain
+                    max_contra = 0.0  # Neutralize the contradiction
+                    best_contradiction = 0.0
+                    contradiction_margin = -max_pool  # Negative means entailment dominates
+        
         support_tier_rank = _verification_tier_rank(nli_scores[best_idx].chunk)
         contradiction_tier_rank = _verification_tier_rank(nli_scores[best_contra_idx].chunk)
         contradiction_posture_valid = _contradiction_posture_valid(
@@ -452,10 +481,29 @@ class NLIVerifier:
             contradiction_tier_rank=contradiction_tier_rank,
             contradiction_posture_valid=contradiction_posture_valid,
         )
+        # Enhanced support-dominates logic with tier-aware rhetorical contradiction detection
+        # When we have near-perfect entailment from highest tier, contradiction from lower
+        # tiers (concurrences, dissents) is likely rhetorical tension, not factual falsity
+        near_perfect_entailment = (
+            best_entailment >= self.rhetorical_contradiction_entailment_threshold 
+            and support_tier_rank <= 2
+        )
+        
         support_dominates_contradiction = (
-            best_entailment >= 0.90
-            and (support_ratio >= 0.35 or auth_weighted_entail >= 0.45)
-            and contradiction_margin < 0.10
+            (best_entailment >= 0.90
+             and (support_ratio >= 0.35 or auth_weighted_entail >= 0.45)
+             and contradiction_margin < 0.10)
+            or (near_perfect_entailment and contradiction_tier_rank > support_tier_rank)
+        )
+        
+        # NEW: Rhetorical contradiction detection
+        # When contradiction comes from lower tier than support, and entailment is very high,
+        # the contradiction is likely from dissenting views, not factual falsity
+        tier_gap = contradiction_tier_rank - support_tier_rank
+        is_rhetorical_contradiction = (
+            near_perfect_entailment
+            and tier_gap >= self.rhetorical_contradiction_tier_gap
+            and best_contradiction < 0.999  # Not absolute certainty of contradiction
         )
         is_contradicted = (
             max_contra > self.contradiction_threshold
@@ -463,7 +511,16 @@ class NLIVerifier:
             and tier_allows_contradiction
             and contradiction_overlap_valid
         )
-        contra_penalty = max_contra if is_contradicted else 0.0
+        
+        # NEW: Apply rhetorical contradiction discount
+        # When high entailment from top-tier source coexists with contradiction from lower tiers,
+        # it's often dissent/concurrence rhetoric, not factual falsity. Reduce penalty.
+        if is_rhetorical_contradiction and is_contradicted:
+            # Reduce penalty for rhetorical contradictions (e.g., dissenting views)
+            discount = self.rhetorical_contradiction_penalty_discount
+            contra_penalty = max_contra * (1.0 - discount)
+        else:
+            contra_penalty = max_contra if is_contradicted else 0.0
 
         raw_final = (
             self.alpha * max_pool
@@ -494,6 +551,8 @@ class NLIVerifier:
                 "tier_allows_contradiction": float(tier_allows_contradiction),
                 "contra_penalty": contra_penalty,
                 "support_dominates_contradiction": float(support_dominates_contradiction),
+                "is_rhetorical_contradiction": float(is_rhetorical_contradiction),
+                "near_perfect_entailment": float(near_perfect_entailment),
             },
             best_contradicting_chunk_idx=nli_scores[best_contra_idx].chunk_idx,
             best_contradicting_chunk=nli_scores[best_contra_idx].chunk,

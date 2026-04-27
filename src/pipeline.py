@@ -55,6 +55,14 @@ _DETAILED_RESPONSE_QUERY_RE = re.compile(
     r"|detail(?:ed|s)?\b"
     r"|outline\b"
     r"|walk\s+through\b"
+    r"|what\s+is\s+the\s+rule\b"
+    r"|what\s+is\s+the\s+standard\b"
+    r"|what\s+is\s+the\s+test\b"
+    r"|how\s+does\s+it\s+work\b"
+    r"|how\s+is\s+.+?\s+determined\b"
+    r"|what\s+are\s+the\s+(?:requirements?|elements?|factors?|conditions?)\b"
+    r"|what\s+are\s+the\s+implications?\b"
+    r"|describe\s+the\s+(?:process|procedure|framework)\b"
     r")",
     re.IGNORECASE,
 )

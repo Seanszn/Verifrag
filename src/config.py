@@ -173,10 +173,18 @@ class VerificationConfig:
     enabled: bool = env_flag("ENABLE_VERIFICATION", True)
     verifier_mode: str = os.getenv("VERIFICATION_VERIFIER_MODE", "live").strip().lower()
     fallback_to_heuristic_on_error: bool = env_flag("VERIFICATION_FALLBACK_TO_HEURISTIC", False)
-    agg_alpha: float = 0.35
-    agg_beta: float = 0.20
-    agg_gamma: float = 0.30
-    agg_delta: float = 0.25
+    agg_alpha: float = 0.40  # Entailment weight - increased from 0.35 to strengthen positive evidence
+    agg_beta: float = 0.20   # Support ratio weight
+    agg_gamma: float = 0.30  # Authority-weighted entailment weight
+    agg_delta: float = 0.20  # Contradiction penalty weight - decreased from 0.25
+    
+    # Rhetorical contradiction detection thresholds
+    # When high entailment (0.95+) from top-tier source coexists with high contradiction
+    # from lower tiers (dissents, concurrences), treat as rhetorical tension not falsity
+    rhetorical_contradiction_entailment_threshold: float = 0.95
+    rhetorical_contradiction_tier_gap: int = 2  # Tiers lower than support to qualify as rhetorical
+    rhetorical_contradiction_penalty_discount: float = 0.5  # Reduce penalty by 50% when detected
+    
     support_threshold: float = 0.5
     contradiction_threshold: float = 0.6
     authority_weights: Dict[str, float] = field(default_factory=lambda: {
@@ -189,7 +197,7 @@ class VerificationConfig:
         "unknown": 0.40,
     })
     threshold_verified: float = 0.70
-    threshold_supported: float = 0.55
+    threshold_supported: float = 0.55  # Restored to 0.55 - 0.50 caused false positives
     threshold_possible_support: float = 0.40
     threshold_weak: float = 0.50
     threshold_contradicted: float = 0.60

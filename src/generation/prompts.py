@@ -97,7 +97,10 @@ Answering instructions:
 
 _CONCISE_RESPONSE_FORMAT_INSTRUCTIONS = """Response format:
 - Start with one direct plain-text answer sentence.
-- Keep the answer to 1 to 3 complete plain-text sentences.
+- Keep the answer to 1 to 3 complete plain-text sentences for simple factual queries.
+- For conceptual questions (e.g., "what is the rule", "how does it work",
+  "what is the standard"), expand to 2-3 sentences covering the key elements
+  or conditions rather than a single bare conclusion.
 - Do not use bullets or numbered lists."""
 
 
@@ -106,6 +109,10 @@ _DETAILED_RESPONSE_FORMAT_INSTRUCTIONS = """Response format:
 - Then provide 2 to 4 short paragraphs or a compact hyphen-bullet list when the
   user's question asks for more detail, practical takeaways, comparison, or
   bullets.
+- For conceptual questions (e.g., "what is the rule", "how does it work",
+  "what is the standard"), provide a richer answer with 2-3 distinct legal
+  propositions covering the key elements, conditions, or implications rather
+  than a single bare conclusion.
 - Use only the allowed answer facts in the retrieved context to build those
   paragraphs or bullets.
 - If the allowed answer facts do not support a richer explanation, give a
