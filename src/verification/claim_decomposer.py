@@ -23,10 +23,12 @@ _WHITESPACE_RE = re.compile(r"\s+")
 _SENTENCE_RE = re.compile(r"[^.!?]+[.!?]?")
 _PROTECTED_PERIOD = "\x00"
 _LEGAL_ABBREVIATION_RE = re.compile(
-    r"\b(?:U\.\s*S\.\s*C|U\.\s*S|S\.\s*Ct|F\.\s*(?:3d|2d|Supp)|"
-    r"No|Nos|App|Id|e\.g|i\.e|v)\.",
+    r"\b(?:U\.\s*S\.\s*C|U\.\s*S|S\.\s*Ct|D\.\s*C|F\.\s*(?:3d|2d|Supp)|"
+    r"No|Nos|App|Cir|Id|Dr|Mr|Mrs|Ms|Prof|Hon|Jr|Sr|Lt|"
+    r"Co|Corp|Inc|Ltd|L\.?\s*P|L\.?\s*L\.?\s*C|e\.g|i\.e|v)\.",
     re.IGNORECASE,
 )
+_INITIAL_SEQUENCE_RE = re.compile(r"\b(?:[A-Z]\.\s*){2,}")
 _CLAIM_CITATION_PREFIX_RE = re.compile(r"^(?:\[\d+\]\s*)+")
 _CLAIM_MARKDOWN_HEADING_RE = re.compile(
     r"^\*{0,2}(?:short answer|analysis|limits)\s*:?\*{0,2}\s*:?\s*",
@@ -70,6 +72,7 @@ _COMMON_VERB_LEMMAS = {
     "award",
     "claim",
     "conclude",
+    "concern",
     "contend",
     "deny",
     "determine",
@@ -218,8 +221,26 @@ def split_clauses(sentence: str) -> list[str]:
         segment = segment.strip()
         if not segment:
             continue
-        clauses.extend(_split_conjoined_predicates(segment))
+        for causal_segment in _split_causal_claim(segment):
+            clauses.extend(_split_conjoined_predicates(causal_segment))
     return clauses
+
+
+def _split_causal_claim(clause: str) -> list[str]:
+    trimmed = clause.strip().rstrip(".")
+    match = re.search(r"\s+because\s+", trimmed, flags=re.IGNORECASE)
+    if match is None:
+        return [_ensure_terminal_period(clause)]
+
+    main = trimmed[: match.start()].strip(" ,")
+    reason = trimmed[match.end() :].strip(" ,")
+    if not main or not reason:
+        return [_ensure_terminal_period(clause)]
+
+    # Keep causal decomposition conservative: emit independently verifiable
+    # factual components, rather than one compound claim whose unsupported
+    # reason can poison an otherwise supported disposition.
+    return [_ensure_terminal_period(main), _ensure_terminal_period(_capitalize_initial(reason))]
 
 
 def _split_conjoined_predicates(clause: str) -> list[str]:
@@ -429,9 +450,13 @@ def _classify_claim_type(text: str) -> str:
 
 
 def _protect_sentence_abbreviations(text: str) -> str:
-    return _LEGAL_ABBREVIATION_RE.sub(
+    protected = _LEGAL_ABBREVIATION_RE.sub(
         lambda match: match.group(0).replace(".", _PROTECTED_PERIOD),
         text,
+    )
+    return _INITIAL_SEQUENCE_RE.sub(
+        lambda match: match.group(0).replace(".", _PROTECTED_PERIOD),
+        protected,
     )
 
 
@@ -476,6 +501,12 @@ def _ensure_terminal_period(text: str) -> str:
     if text[-1] in ".!?":
         return text
     return f"{text}."
+
+
+def _capitalize_initial(text: str) -> str:
+    if not text:
+        return text
+    return text[0].upper() + text[1:]
 
 
 def _claim_id(doc_id: str, sent_id: int, start_char: int, end_char: int, text: str) -> str:

@@ -51,7 +51,7 @@ def build_claim_citation_links(
             if not isinstance(chunk, dict):
                 continue
 
-            chunk_id = chunk.get("id") or chunk.get("chunk_id")
+            chunk_id = chunk.get("source_chunk_id") or chunk.get("id") or chunk.get("chunk_id")
             if not chunk_id:
                 continue
 
@@ -63,6 +63,7 @@ def build_claim_citation_links(
                     "score": _coerce_score(score),
                     "chunk_id": chunk_id,
                     "doc_id": citation.get("doc_id"),
+                    "evidence_quote": _evidence_quote_from_chunk(chunk),
                     "source_label": (
                         citation.get("citation")
                         or citation.get("source_file")
@@ -138,6 +139,7 @@ def build_claim_annotation(claim: dict[str, Any]) -> dict[str, Any]:
                 "score": _coerce_score(link.get("score")),
                 "chunk_id": link.get("chunk_id"),
                 "doc_id": link.get("doc_id"),
+                "evidence_quote": link.get("evidence_quote"),
                 "source_label": link.get("source_label"),
                 "citation": _coerce_citation_payload(link.get("citation")),
             }
@@ -185,6 +187,14 @@ def _coerce_citation_payload(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return dict(value)
     return {}
+
+
+def _evidence_quote_from_chunk(chunk: dict[str, Any]) -> str | None:
+    for field in ("text", "text_preview"):
+        value = chunk.get(field)
+        if isinstance(value, str) and value.strip():
+            return " ".join(value.split())
+    return None
 
 
 def _coerce_score(score: Any) -> float | None:
