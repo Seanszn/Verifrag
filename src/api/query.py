@@ -46,6 +46,7 @@ def submit_query(
             query=payload.query,
             conversation_id=payload.conversation_id,
             request_id=request_id,
+            include_uploaded_chunks=payload.include_uploaded_chunks,
         )
     except Exception:
         elapsed_ms = (time.perf_counter() - started) * 1000

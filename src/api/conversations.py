@@ -38,6 +38,17 @@ def create_conversation(
     return db.create_conversation(current_user["id"], payload.title)
 
 
+@router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_conversation(
+    conversation_id: int,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> None:
+    deleted = db.delete_conversation(conversation_id, current_user["id"])
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+
+
 @router.get("/{conversation_id}/messages", response_model=list[MessageResponse])
 def list_messages(
     conversation_id: int,

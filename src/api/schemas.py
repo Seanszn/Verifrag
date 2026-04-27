@@ -123,6 +123,7 @@ class InteractionDetailResponse(BaseModel):
 class QueryRequest(BaseModel):
     query: str = Field(min_length=1, max_length=8000)
     conversation_id: int | None = None
+    include_uploaded_chunks: bool = False
 
 
 class QueryResponse(BaseModel):

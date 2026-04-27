@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 import re
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +16,15 @@ from src.config import DATA_DIR
 from src.ingestion.chunker import chunk_document
 from src.ingestion.document import LegalDocument
 from src.ingestion.pdf_parser import PDFParserError, parse_pdf_to_document
+from src.ingestion.user_documents import (
+    UserDocumentError,
+    decode_text_bytes,
+    make_user_document_id,
+    upsert_jsonl_rows,
+    user_document_to_row,
+)
 from src.retrieval.user_uploads import build_user_upload_indices
+from src.indexing.index_discovery import discover_index_artifacts
 
 try:
     from docx import Document as DocxDocument
@@ -112,7 +118,7 @@ async def upload_documents(
     processed_path = user_root / "processed" / PROCESSED_FILENAME
     stored_files_dir = user_root / "files"
 
-    raw_rows = [_document_to_row(item["document"]) for item in parsed_uploads]
+    raw_rows = [user_document_to_row(item["document"]) for item in parsed_uploads]
     processed_rows = [chunk.to_dict() for item in parsed_uploads for chunk in item["chunks"]]
 
     for item in parsed_uploads:
@@ -123,8 +129,8 @@ async def upload_documents(
             file_bytes=item["file_bytes"],
         )
 
-    _upsert_jsonl_rows(raw_path, raw_rows)
-    _upsert_jsonl_rows(processed_path, processed_rows)
+    upsert_jsonl_rows(raw_path, raw_rows)
+    upsert_jsonl_rows(processed_path, processed_rows)
     build_user_upload_indices(
         current_user["id"],
         uploads_root=USER_UPLOADS_ROOT,
@@ -146,6 +152,160 @@ async def upload_documents(
             )
             for item in parsed_uploads
         ],
+    )
+
+
+class UploadedDocumentInfo(BaseModel):
+    """Information about a user-uploaded document."""
+
+    document_id: str
+    filename: str
+    case_name: str
+    size_bytes: int
+    chunk_count: int
+    is_privileged: bool
+    uploaded_at: str
+
+
+@router.get(
+    "/api/uploads",
+    response_model=list[UploadedDocumentInfo],
+)
+async def list_uploads(
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> list[UploadedDocumentInfo]:
+    """List all uploaded documents for the current user."""
+    user_root = USER_UPLOADS_ROOT / f"user_{current_user['id']}"
+    raw_path = user_root / "raw" / RAW_FILENAME
+    processed_path = user_root / "processed" / PROCESSED_FILENAME
+
+    if not raw_path.exists():
+        return []
+
+    document_ids: set[str] = set()
+    with raw_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                try:
+                    doc = json.loads(line)
+                    document_ids.add(doc["id"])
+                except (json.JSONDecodeError, KeyError):
+                    continue
+
+    processed_counts: dict[str, int] = {}
+    if processed_path.exists():
+        with processed_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        chunk = json.loads(line)
+                        doc_id = chunk.get("doc_id") or chunk.get("document_id")
+                        if doc_id:
+                            processed_counts[doc_id] = processed_counts.get(doc_id, 0) + 1
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+
+    documents: list[UploadedDocumentInfo] = []
+    with raw_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                try:
+                    doc = json.loads(line)
+                    doc_id = doc.get("id")
+                    if doc_id in document_ids:
+                        document_ids.discard(doc_id)
+                        documents.append(
+                            UploadedDocumentInfo(
+                                document_id=doc_id,
+                                filename=doc.get("source_file", ""),
+                                case_name=doc.get("case_name", ""),
+                                size_bytes=len(doc.get("full_text", "")),
+                                chunk_count=processed_counts.get(doc_id, 0),
+                                is_privileged=doc.get("is_privileged", False),
+                                uploaded_at=doc.get("uploaded_at", ""),
+                            )
+                        )
+                except (json.JSONDecodeError, KeyError):
+                    continue
+
+    return documents
+
+
+@router.delete(
+    "/api/uploads/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_upload(
+    document_id: str,
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> None:
+    """Delete an uploaded document for the current user."""
+    user_root = USER_UPLOADS_ROOT / f"user_{current_user['id']}"
+    raw_path = user_root / "raw" / RAW_FILENAME
+    processed_path = user_root / "processed" / PROCESSED_FILENAME
+    index_dir = user_root / "index"
+
+    if not raw_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No uploads found.",
+        )
+
+    remaining_raw: list[dict[str, Any]] = []
+    deleted = False
+    with raw_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                try:
+                    doc = json.loads(line)
+                    if doc.get("id") == document_id:
+                        deleted = True
+                        continue
+                    remaining_raw.append(doc)
+                except json.JSONDecodeError:
+                    continue
+
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found.",
+        )
+
+    with raw_path.open("w", encoding="utf-8") as f:
+        for doc in remaining_raw:
+            f.write(json.dumps(doc, ensure_ascii=False) + "\n")
+
+    remaining_processed: list[dict[str, Any]] = []
+    if processed_path.exists():
+        with processed_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        chunk = json.loads(line)
+                        chunk_doc_id = chunk.get("doc_id") or chunk.get("document_id")
+                        if chunk_doc_id != document_id:
+                            remaining_processed.append(chunk)
+                    except json.JSONDecodeError:
+                        continue
+
+    with processed_path.open("w", encoding="utf-8") as f:
+        for chunk in remaining_processed:
+            f.write(json.dumps(chunk, ensure_ascii=False) + "\n")
+
+    if index_dir.exists():
+        import shutil
+        try:
+            artifacts = discover_index_artifacts(index_dir=index_dir)
+            if artifacts.chroma_path.exists():
+                shutil.rmtree(artifacts.chroma_path)
+            if artifacts.bm25_path.exists():
+                shutil.rmtree(artifacts.bm25_path)
+        except Exception:
+            pass
+
+    build_user_upload_indices(
+        current_user["id"],
+        uploads_root=USER_UPLOADS_ROOT,
     )
 
 
@@ -185,11 +345,17 @@ def _text_document_from_bytes(
     *,
     is_privileged: bool,
 ) -> LegalDocument:
-    text = _decode_text_bytes(file_bytes).strip()
+    try:
+        text = decode_text_bytes(
+            file_bytes,
+            error_message="Text upload could not be decoded as UTF-8 or a common fallback encoding.",
+        ).strip()
+    except UserDocumentError as exc:
+        raise UnsupportedUploadError(str(exc)) from exc
     if not text:
         raise UnsupportedUploadError(f"Uploaded text file '{filename}' did not contain readable text.")
     return LegalDocument(
-        id=_make_document_id(filename, text),
+        id=make_user_document_id(filename, text),
         doc_type="user_upload",
         full_text=text,
         case_name=Path(filename).stem.replace("_", " ").replace("-", " ").strip() or filename,
@@ -218,22 +384,13 @@ def _docx_document_from_bytes(
         raise UnsupportedUploadError(f"Uploaded DOCX file '{filename}' did not contain readable text.")
 
     return LegalDocument(
-        id=_make_document_id(filename, text),
+        id=make_user_document_id(filename, text),
         doc_type="user_upload",
         full_text=text,
         case_name=Path(filename).stem.replace("_", " ").replace("-", " ").strip() or filename,
         source_file=filename,
         is_privileged=is_privileged,
     )
-
-
-def _decode_text_bytes(file_bytes: bytes) -> str:
-    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
-        try:
-            return file_bytes.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    raise UnsupportedUploadError("Text upload could not be decoded as UTF-8 or a common fallback encoding.")
 
 
 def _store_original_file(
@@ -250,54 +407,6 @@ def _store_original_file(
     return stored_path
 
 
-def _document_to_row(document: LegalDocument) -> dict[str, Any]:
-    return {
-        "id": document.id,
-        "doc_type": document.doc_type,
-        "full_text": document.full_text,
-        "case_name": document.case_name,
-        "citation": document.citation,
-        "court": document.court,
-        "court_level": document.court_level,
-        "date_decided": document.date_decided.isoformat() if document.date_decided else None,
-        "source_file": document.source_file,
-        "is_privileged": document.is_privileged,
-        "uploaded_at": datetime.now(timezone.utc).isoformat(),
-    }
-
-
-def _upsert_jsonl_rows(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    ordered_ids: list[str] = []
-    rows_by_id: dict[str, dict[str, Any]] = {}
-
-    if path.exists():
-        with path.open("r", encoding="utf-8") as handle:
-            for line_number, line in enumerate(handle, start=1):
-                payload = line.strip()
-                if not payload:
-                    continue
-                try:
-                    row = json.loads(payload)
-                except json.JSONDecodeError as exc:
-                    raise RuntimeError(f"Invalid JSON in {path} at line {line_number}.") from exc
-                row_id = str(row["id"])
-                if row_id not in rows_by_id:
-                    ordered_ids.append(row_id)
-                rows_by_id[row_id] = row
-
-    for row in rows:
-        row_id = str(row["id"])
-        if row_id not in rows_by_id:
-            ordered_ids.append(row_id)
-        rows_by_id[row_id] = row
-
-    with path.open("w", encoding="utf-8") as handle:
-        for row_id in ordered_ids:
-            handle.write(json.dumps(rows_by_id[row_id], ensure_ascii=False) + "\n")
-
-
 def _sanitize_filename(filename: str | None) -> str:
     if not filename:
         return ""
@@ -306,8 +415,3 @@ def _sanitize_filename(filename: str | None) -> str:
     return sanitized.strip(" .")
 
 
-def _make_document_id(filename: str, text: str) -> str:
-    stem = Path(filename).stem.lower()
-    slug = re.sub(r"[^a-z0-9]+", "-", stem).strip("-") or "upload"
-    digest = hashlib.sha1(text[:4000].encode("utf-8")).hexdigest()[:10]
-    return f"upload_{slug}_{digest}"
