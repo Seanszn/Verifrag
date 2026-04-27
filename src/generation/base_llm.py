@@ -27,3 +27,12 @@ class BaseLLM(ABC):
     ) -> str:
         """Generate a response with retrieved context."""
         pass
+
+    def classify_query_route(self, query: str) -> dict[str, Any]:
+        """Optionally classify a query into a retrieval/generation route."""
+        _ = query
+        return {
+            "status": "not_applied:not_implemented",
+            "route": None,
+            "confidence": 0.0,
+        }

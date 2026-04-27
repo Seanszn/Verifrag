@@ -46,6 +46,11 @@ insufficient rather than filling the gap from general knowledge.
 
 Requirements:
 - Ground every material legal proposition in the provided context.
+- When the context contains user-uploaded document facts, treat those facts as
+  the client's record or work product, not as precedential legal authority.
+- If the user asks about an uploaded document, answer from the uploaded-document
+  facts first and use retrieved authorities only for legal comparison or
+  background.
 - Do not invent citations, quotations, holdings, procedural facts, or dates.
 - Prefer narrow statements that can be verified from the retrieved text.
 - Treat "Allowed answer fact" entries, canonical answer fact entries, and
@@ -188,8 +193,8 @@ def format_retrieved_context(chunks: Sequence[str]) -> str:
 
 def _format_context_item(idx: int, chunk: str) -> str:
     if "Allowed answer fact:" in chunk or "Evidence type:" in chunk:
-        return f"[{idx}] {chunk}"
-    return f"[{idx}] Evidence type: allowed answer fact\nAllowed answer fact: {chunk}"
+        return f"Context item {idx}:\n{chunk}"
+    return f"Context item {idx}:\nEvidence type: allowed answer fact\nAllowed answer fact: {chunk}"
 
 
 def format_conversation_history(messages: Sequence[dict[str, Any]] | None) -> str:

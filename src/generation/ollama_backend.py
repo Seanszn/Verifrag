@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 import time
 from typing import Any, List, Optional
 
@@ -162,6 +164,68 @@ class OllamaBackend(BaseLLM):
         )
         return self.generate(prompt)
 
+    def classify_query_route(self, query: str) -> dict[str, Any]:
+        """Classify ambiguous queries into a fixed route set."""
+        prompt = (
+            "Classify this legal RAG user query into exactly one route.\n"
+            "Routes:\n"
+            "- topic_overview: asks for a general explanation or overview, not one case.\n"
+            "- research_leads: asks to find cases, authorities, examples, or starting points.\n"
+            "- case_lookup: asks about a specific case but does not include a full citation.\n"
+            "- off_corpus: unrelated to legal retrieval or not answerable from a legal corpus.\n"
+            "- clarification_needed: too ambiguous to choose a retrieval strategy.\n\n"
+            "Return only compact JSON with keys route, confidence, reason. "
+            "Confidence must be between 0 and 1.\n"
+            f"Query: {query}\n"
+        )
+        try:
+            raw_response = self.generate(prompt, max_tokens=120)
+        except Exception as exc:
+            return {
+                "status": f"error:{exc.__class__.__name__}",
+                "route": None,
+                "confidence": 0.0,
+                "reason": str(exc),
+            }
+
+        parsed = _parse_route_json(raw_response)
+        if parsed is None:
+            return {
+                "status": "error:invalid_json",
+                "route": None,
+                "confidence": 0.0,
+                "raw_response": raw_response[:500],
+            }
+
+        route = str(parsed.get("route") or "").strip().lower()
+        valid_routes = {
+            "topic_overview",
+            "research_leads",
+            "case_lookup",
+            "off_corpus",
+            "clarification_needed",
+        }
+        if route not in valid_routes:
+            return {
+                "status": "error:invalid_route",
+                "route": None,
+                "confidence": 0.0,
+                "raw_route": route,
+                "raw_response": raw_response[:500],
+            }
+
+        try:
+            confidence = float(parsed.get("confidence") or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        confidence = max(0.0, min(1.0, confidence))
+        return {
+            "status": "ok",
+            "route": route,
+            "confidence": confidence,
+            "reason": str(parsed.get("reason") or "").strip()[:300],
+        }
+
     def health_check(self) -> bool:
         """Best-effort Ollama reachability check."""
         try:
@@ -212,3 +276,21 @@ class OllamaBackend(BaseLLM):
         if body:
             return body
         return f"HTTP {response.status_code}"
+
+
+def _parse_route_json(text: str) -> dict[str, Any] | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    candidates = [raw]
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if match is not None:
+        candidates.append(match.group(0))
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
