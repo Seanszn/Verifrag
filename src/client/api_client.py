@@ -141,6 +141,11 @@ def load_conversations() -> list[dict[str, Any]]:
     return response.json()
 
 
+def delete_conversation(conversation_id: int) -> None:
+    response = api_request("DELETE", f"/api/conversations/{conversation_id}")
+    _raise_for_api_error(response, "Could not delete conversation.")
+
+
 def load_messages(conversation_id: int) -> list[dict[str, Any]]:
     response = api_request("GET", f"/api/conversations/{conversation_id}/messages")
     _raise_for_api_error(response, "Could not load conversation history.")
@@ -153,11 +158,20 @@ def load_interactions(conversation_id: int) -> list[dict[str, Any]]:
     return response.json()
 
 
-def submit_query(query: str, conversation_id: int | None = None) -> dict[str, Any]:
+def submit_query(
+    query: str,
+    conversation_id: int | None = None,
+    *,
+    include_uploaded_chunks: bool = False,
+) -> dict[str, Any]:
     response = api_request(
         "POST",
         "/api/query",
-        json={"query": query, "conversation_id": conversation_id},
+        json={
+            "query": query,
+            "conversation_id": conversation_id,
+            "include_uploaded_chunks": include_uploaded_chunks,
+        },
     )
     _raise_for_api_error(response, "Query submission failed.")
     return response.json()
@@ -193,6 +207,17 @@ def upload_documents(
     )
     _raise_for_api_error(response, "Upload failed.")
     return response.json()
+
+
+def list_uploads() -> list[dict[str, Any]]:
+    response = api_request("GET", "/api/uploads")
+    _raise_for_api_error(response, "Could not load uploads.")
+    return response.json()
+
+
+def delete_upload(document_id: str) -> None:
+    response = api_request("DELETE", f"/api/uploads/{document_id}")
+    _raise_for_api_error(response, "Could not delete upload.")
 
 
 def set_auth(auth_payload: dict[str, Any]) -> None:

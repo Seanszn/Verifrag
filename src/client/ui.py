@@ -13,9 +13,12 @@ import streamlit as st
 from src.client.api_client import (
     APIError,
     clear_auth,
+    delete_conversation as delete_conversation_request,
+    delete_upload,
     load_conversations,
     load_interactions,
     load_messages,
+    list_uploads,
     login as login_request,
     logout as logout_request,
     register as register_request,
@@ -23,8 +26,17 @@ from src.client.api_client import (
     submit_query as submit_query_request,
     upload_documents as upload_documents_request,
 )
-from src.client.claim_analysis import extract_claim_evaluations, find_cases_for_interaction
-from src.verification.claim_contract import support_level_from_verdict
+from src.client.claim_analysis import (
+    SUPPORT_LEVEL_ORDER,
+    extract_claim_evaluations,
+    find_cases_for_interaction,
+    group_evidence_case_references_by_support_level,
+)
+from src.verification.claim_contract import (
+    attach_claim_citation_links,
+    build_claim_citation_links,
+    support_level_from_verdict,
+)
 
 
 PAGE_LOGIN = "login"
@@ -66,6 +78,7 @@ def initialize_state() -> None:
         "messages_loaded_for": None,
         "conversation_refresh_needed": False,
         "current_query": "",
+        "include_uploaded_chunks": False,
         "is_generating": False,
         "pending_query": None,
         "query_progress": None,
@@ -148,6 +161,26 @@ def apply_styles() -> None:
             font-size: 1.35rem;
             font-weight: 700;
             letter-spacing: 0.02em;
+        }
+
+        .vr-logo-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 3rem;
+            height: 3rem;
+            background: #ffffff;
+            border-radius: 999px;
+            padding: 0.42rem;
+            box-sizing: border-box;
+            transform: translateY(-0.24rem);
+        }
+
+        .vr-logo-link img {
+            display: block;
+            width: 92%;
+            height: 92%;
+            object-fit: contain;
         }
 
         .vr-page-title {
@@ -411,6 +444,57 @@ def apply_styles() -> None:
             padding: 0.18rem 0.62rem;
         }
 
+        .vr-claim-support-summary + div[data-testid="stHorizontalBlock"] {
+            align-items: center;
+            gap: 0.45rem;
+            margin-top: 0.7rem;
+        }
+
+        .vr-claim-support-summary + div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+            flex: 0 0 auto !important;
+            min-width: fit-content !important;
+            width: auto !important;
+        }
+
+        .vr-claim-support-summary + div[data-testid="stHorizontalBlock"] [data-testid="stPopover"] button,
+        .vr-claim-support-summary + div[data-testid="stHorizontalBlock"] [data-testid="stButton"] button {
+            align-items: center;
+            border: 1px solid #d1d5db !important;
+            border-radius: 999px !important;
+            color: #374151 !important;
+            display: inline-flex;
+            font-size: 0.78rem;
+            font-weight: 600;
+            height: auto;
+            justify-content: center;
+            line-height: 1.25;
+            min-height: 0;
+            padding: 0.18rem 0.62rem;
+            width: max-content;
+        }
+
+        .vr-claim-support-summary + div[data-testid="stHorizontalBlock"] [data-testid="stPopover"] button svg {
+            display: none;
+        }
+
+        .vr-claim-support-summary + div[data-testid="stHorizontalBlock"] .vr-claim-popover-supported + div[data-testid="stPopover"] button,
+        .vr-claim-support-summary + div[data-testid="stHorizontalBlock"] .vr-claim-popover-supported + div[data-testid="stButton"] button {
+            background: #d9f2e3 !important;
+            box-shadow: inset 0 -1px 0 #2f855a !important;
+        }
+
+        .vr-claim-support-summary + div[data-testid="stHorizontalBlock"] .vr-claim-popover-possibly-supported + div[data-testid="stPopover"] button,
+        .vr-claim-support-summary + div[data-testid="stHorizontalBlock"] .vr-claim-popover-possibly-supported + div[data-testid="stButton"] button {
+            background: #fff0c7 !important;
+            box-shadow: inset 0 -1px 0 #c48a00 !important;
+        }
+
+        .vr-claim-support-summary + div[data-testid="stHorizontalBlock"] .vr-claim-popover-unsupported + div[data-testid="stPopover"] button,
+        .vr-claim-support-summary + div[data-testid="stHorizontalBlock"] .vr-claim-popover-unsupported + div[data-testid="stButton"] button {
+            background: #fde2e1 !important;
+            box-shadow: inset 0 -1px 0 #b83232 !important;
+        }
+
         [data-testid="stFileUploader"] section {
             border-radius: 18px;
             border: 1.5px dashed #aeb7c4;
@@ -427,6 +511,26 @@ def apply_styles() -> None:
         .vr-session-anchor + div[data-testid="stVerticalBlock"] [data-testid="stButton"] button {
             text-align: left;
             justify-content: flex-start;
+            height: 2.9rem;
+            max-height: 2.9rem;
+            overflow: hidden;
+        }
+
+        .vr-session-delete-anchor + div[data-testid="stButton"] button {
+            text-align: center !important;
+            justify-content: center !important;
+            height: 2.9rem !important;
+            min-height: 2.9rem !important;
+            max-height: 2.9rem !important;
+            padding: 0 !important;
+        }
+
+        .vr-session-delete-anchor + div[data-testid="stButton"] button p {
+            display: none !important;
+        }
+
+        .vr-session-delete-anchor + div[data-testid="stButton"] button span {
+            margin: 0 !important;
         }
 
         div[data-testid="InputInstructions"] {
@@ -448,8 +552,12 @@ def apply_styles() -> None:
     )
 
 
-def navigate(page: str) -> None:
+def set_page(page: str) -> None:
     st.session_state["page"] = page
+
+
+def navigate(page: str) -> None:
+    set_page(page)
     st.rerun()
 
 
@@ -461,6 +569,7 @@ def reset_conversation_state() -> None:
     st.session_state["messages_loaded_for"] = None
     st.session_state["conversation_refresh_needed"] = False
     st.session_state["current_query"] = ""
+    st.session_state["include_uploaded_chunks"] = False
     st.session_state["is_generating"] = False
     st.session_state["pending_query"] = None
     st.session_state["query_progress"] = None
@@ -478,12 +587,27 @@ def start_new_conversation() -> None:
     st.session_state["conversation_messages"] = []
     st.session_state["messages_loaded_for"] = None
     st.session_state["current_query"] = ""
+    st.session_state["include_uploaded_chunks"] = False
     st.session_state["is_generating"] = False
     st.session_state["pending_query"] = None
     st.session_state["query_progress"] = None
     st.session_state["clear_query_after_submit"] = False
     st.session_state["upload_notice"] = None
     st.session_state["last_pipeline"] = None
+    st.session_state["query_error"] = None
+    st.rerun()
+
+
+def delete_conversation(conversation_id: int) -> None:
+    delete_conversation_request(conversation_id)
+    st.session_state["conversations"] = [
+        item for item in st.session_state.get("conversations", []) if item.get("id") != conversation_id
+    ]
+    if st.session_state.get("selected_conversation_id") == conversation_id:
+        st.session_state["selected_conversation_id"] = None
+        st.session_state["conversation_messages"] = []
+        st.session_state["messages_loaded_for"] = None
+        st.session_state["last_pipeline"] = None
     st.session_state["query_error"] = None
     st.rerun()
 
@@ -505,7 +629,21 @@ def logout() -> None:
 
 
 def render_header(action_label: str, action_callback: Callable[[], None]) -> None:
-    brand_col, action_col = st.columns([6, 1.5], vertical_alignment="center")
+    logo_base64 = ""
+    logo_path = Path(__file__).parent.parent.parent / "assets" / "VR_logo.png"
+    if logo_path.exists():
+        logo_base64 = base64.b64encode(logo_path.read_bytes()).decode("ascii")
+
+    logo_col, brand_col, action_col = st.columns([0.5, 5.5, 1.5], vertical_alignment="center")
+    with logo_col:
+        st.markdown(
+            f"""
+            <a class="vr-logo-link" href="?vr_page={PAGE_HOME}" target="_self" aria-label="Home">
+                <img src="data:image/png;base64,{logo_base64}" alt="VerifiRAG logo">
+            </a>
+            """,
+            unsafe_allow_html=True,
+        )
     with brand_col:
         st.markdown('<div class="vr-brand">VerifiRAG</div>', unsafe_allow_html=True)
     with action_col:
@@ -635,92 +773,18 @@ def build_interaction_detail_from_query_result(result: dict[str, Any]) -> dict[s
     normalized_citations = citations if isinstance(citations, list) else []
     claim_citation_links = pipeline.get("claim_citation_links")
     if not isinstance(claim_citation_links, list):
-        claim_citation_links = _build_claim_citation_links_from_pipeline(
+        claim_citation_links = build_claim_citation_links(
             normalized_claims,
             normalized_citations,
         )
 
     return {
         "interaction": interaction,
-        "claims": _attach_claim_citation_links_to_claims(normalized_claims, claim_citation_links),
+        "claims": attach_claim_citation_links(normalized_claims, claim_citation_links),
         "citations": normalized_citations,
         "claim_citation_links": claim_citation_links,
         "contradictions": contradictions if isinstance(contradictions, list) else [],
     }
-
-
-def _build_claim_citation_links_from_pipeline(
-    claims: list[dict[str, Any]],
-    citations: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    citation_by_chunk_id = {
-        str(citation.get("id") or citation.get("chunk_id")): citation
-        for citation in citations
-        if citation.get("id") or citation.get("chunk_id")
-    }
-    links: list[dict[str, Any]] = []
-
-    for claim in claims:
-        verification = claim.get("verification")
-        if not isinstance(verification, dict):
-            continue
-        link_specs = [
-            (
-                "supporting",
-                verification.get("best_supporting_chunk") or verification.get("best_chunk"),
-                verification.get("best_supporting_score", verification.get("final_score")),
-            ),
-            (
-                "contradicting",
-                verification.get("best_contradicting_chunk"),
-                verification.get("best_contradiction_score"),
-            ),
-        ]
-        for relationship, chunk, score in link_specs:
-            if not isinstance(chunk, dict):
-                continue
-            chunk_id = chunk.get("id") or chunk.get("chunk_id")
-            if not chunk_id:
-                continue
-            citation = citation_by_chunk_id.get(str(chunk_id), chunk)
-            links.append(
-                {
-                    "claim_id": claim.get("claim_id"),
-                    "relationship": relationship,
-                    "score": score,
-                    "chunk_id": chunk_id,
-                    "doc_id": citation.get("doc_id"),
-                    "source_label": (
-                        citation.get("citation")
-                        or citation.get("source_file")
-                        or citation.get("source_label")
-                        or citation.get("doc_id")
-                    ),
-                    "citation": citation,
-                }
-            )
-    return links
-
-
-def _attach_claim_citation_links_to_claims(
-    claims: list[dict[str, Any]],
-    claim_citation_links: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    links_by_claim_id: dict[str, list[dict[str, Any]]] = {}
-    for link in claim_citation_links:
-        claim_id = link.get("claim_id")
-        if isinstance(claim_id, str) and claim_id:
-            links_by_claim_id.setdefault(claim_id, []).append(link)
-
-    enriched_claims: list[dict[str, Any]] = []
-    for claim in claims:
-        enriched_claim = dict(claim)
-        claim_id = enriched_claim.get("claim_id")
-        enriched_claim["linked_citations"] = (
-            links_by_claim_id.get(claim_id, []) if isinstance(claim_id, str) else []
-        )
-        enriched_claims.append(enriched_claim)
-    return enriched_claims
 
 
 def enrich_messages_with_interaction_data(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -748,15 +812,14 @@ def build_annotated_response_html(
     response_text: str,
     claims: list[dict[str, Any]] | None,
     answer_blocks: list[dict[str, Any]] | None = None,
+    *,
+    include_legend: bool = True,
 ) -> str | None:
     text = str(response_text or "")
     if not text:
         return None
 
-    highlights = _resolve_claim_highlights(text, claims or [])
-    answer_block_highlights = _resolve_answer_block_highlights(text, answer_blocks or [])
-    if answer_block_highlights:
-        highlights = _select_claim_highlights([*highlights, *answer_block_highlights])
+    highlights = _resolve_response_claim_highlights(text, claims or [], answer_blocks or [])
     if not highlights:
         return None
 
@@ -783,8 +846,20 @@ def build_annotated_response_html(
     if cursor < len(text):
         segments.append(_escape_response_html(text[cursor:]))
 
-    legend = _build_claim_legend_html(highlights)
+    legend = _build_claim_legend_html(highlights) if include_legend else ""
     return f'<div class="vr-annotated-response">{"".join(segments)}</div>{legend}'
+
+
+def _resolve_response_claim_highlights(
+    response_text: str,
+    claims: list[dict[str, Any]],
+    answer_blocks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    highlights = _resolve_claim_highlights(response_text, claims)
+    answer_block_highlights = _resolve_answer_block_highlights(response_text, answer_blocks)
+    if answer_block_highlights:
+        highlights = _select_claim_highlights([*highlights, *answer_block_highlights])
+    return highlights
 
 
 def _resolve_claim_highlights(
@@ -1015,13 +1090,7 @@ def _claim_tooltip(claim: dict[str, Any], support_level: str) -> str:
 
 
 def _build_claim_legend_html(highlights: list[dict[str, Any]]) -> str:
-    counts = {
-        "supported": 0,
-        "possibly_supported": 0,
-        "unsupported": 0,
-    }
-    for highlight in highlights:
-        counts[highlight["support_level"]] += 1
+    counts = _count_claim_support_levels(highlights)
 
     pills = [
         (
@@ -1035,6 +1104,27 @@ def _build_claim_legend_html(highlights: list[dict[str, Any]]) -> str:
     if not pills:
         return ""
     return f'<div class="vr-claim-legend">{"".join(pills)}</div>'
+
+
+def _count_claim_support_levels(highlights: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {level: 0 for level in SUPPORT_LEVEL_ORDER}
+    for highlight in highlights:
+        support_level = highlight.get("support_level")
+        if support_level in counts:
+            counts[str(support_level)] += 1
+    return counts
+
+
+def _claim_support_counts_for_response(
+    response_text: str,
+    claims: list[dict[str, Any]],
+    answer_blocks: list[dict[str, Any]],
+) -> dict[str, int]:
+    if not response_text:
+        return {level: 0 for level in SUPPORT_LEVEL_ORDER}
+    return _count_claim_support_levels(
+        _resolve_response_claim_highlights(response_text, claims, answer_blocks)
+    )
 
 
 def _escape_response_html(text: str) -> str:
@@ -1074,11 +1164,165 @@ def render_assistant_message(message: dict[str, Any]) -> None:
     if not isinstance(answer_blocks, list):
         answer_blocks = []
     if claim_list or answer_blocks:
-        annotated_html = build_annotated_response_html(content, claim_list, answer_blocks)
+        annotated_html = build_annotated_response_html(
+            content,
+            claim_list,
+            answer_blocks,
+            include_legend=False,
+        )
         if annotated_html:
             st.markdown(annotated_html, unsafe_allow_html=True)
+            _render_claim_support_popovers(
+                claim_list,
+                _claim_support_counts_for_response(content, claim_list, answer_blocks),
+                message,
+            )
             return
     st.markdown(content)
+
+
+def _render_claim_support_popovers(
+    claims: list[dict[str, Any]],
+    support_counts: dict[str, int],
+    message: dict[str, Any],
+) -> None:
+    active_levels = [level for level in SUPPORT_LEVEL_ORDER if support_counts.get(level, 0) > 0]
+    if not active_levels:
+        return
+
+    grouped_refs = group_evidence_case_references_by_support_level(claims)
+    popover = getattr(st, "popover", None)
+    st.markdown('<div class="vr-claim-support-summary"></div>', unsafe_allow_html=True)
+    columns = st.columns(len(active_levels))
+
+    if callable(popover):
+        for column, level in zip(columns, active_levels):
+            with column:
+                label = f"{support_counts[level]} {SUPPORT_LEVEL_DISPLAY[level]}"
+                st.markdown(
+                    f'<div class="vr-claim-popover-{_support_level_css_token(level)}"></div>',
+                    unsafe_allow_html=True,
+                )
+                popover_context = popover(label)
+                with popover_context:
+                    _render_claim_support_category_details(level, grouped_refs.get(level, []))
+        return
+
+    selection_key = f"claim_support_summary_{_message_widget_key_suffix(message)}"
+    for column, level in zip(columns, active_levels):
+        with column:
+            label = f"{support_counts[level]} {SUPPORT_LEVEL_DISPLAY[level]}"
+            st.markdown(
+                f'<div class="vr-claim-popover-{_support_level_css_token(level)}"></div>',
+                unsafe_allow_html=True,
+            )
+            if st.button(label, key=f"{selection_key}_{level}"):
+                st.session_state[selection_key] = level
+
+    selected_level = st.session_state.get(selection_key)
+    if selected_level in active_levels:
+        _render_claim_support_category_details(
+            str(selected_level),
+            grouped_refs.get(str(selected_level), []),
+        )
+
+
+def _render_claim_support_category_details(
+    support_level: str,
+    case_refs: list[dict[str, Any]],
+) -> None:
+    label = SUPPORT_LEVEL_DISPLAY[support_level]
+    st.markdown(f"**{label} Evidence**")
+    if not case_refs:
+        st.caption(f"No case references were attached to {label.lower()} claims.")
+        return
+
+    for index, case_ref in enumerate(case_refs, start=1):
+        if index > 1:
+            st.divider()
+        st.markdown(f"**{_case_reference_display_name(case_ref)}**")
+        metadata = _case_reference_metadata(case_ref)
+        if metadata:
+            st.caption(" | ".join(metadata))
+
+        claim_texts = [
+            str(text).strip()
+            for text in case_ref.get("claim_texts", [])
+            if str(text).strip()
+        ]
+        if len(claim_texts) <= 1:
+            claim_text = claim_texts[0] if claim_texts else str(case_ref.get("claim_text") or "").strip()
+            if claim_text:
+                st.markdown(f"Claim: {claim_text}")
+        else:
+            st.markdown("Claims:")
+            for claim_text in claim_texts:
+                st.markdown(f"- {claim_text}")
+
+        evidence_quotes = [
+            str(quote).strip()
+            for quote in case_ref.get("evidence_quotes", [])
+            if str(quote).strip()
+        ]
+        if not evidence_quotes and str(case_ref.get("evidence_quote") or "").strip():
+            evidence_quotes = [str(case_ref.get("evidence_quote")).strip()]
+        if evidence_quotes:
+            st.markdown("Document chunk:")
+            for quote in evidence_quotes:
+                st.markdown(f'> "{html.escape(_compact_evidence_quote(quote))}"')
+
+
+def _case_reference_display_name(case_ref: dict[str, Any]) -> str:
+    case_name = str(case_ref.get("case_name") or "").strip()
+    reporter_citation = str(case_ref.get("reporter_citation") or "").strip()
+    source_label = str(case_ref.get("source_label") or "").strip()
+
+    display_name = case_name or source_label or "Unknown case"
+    if reporter_citation and reporter_citation != display_name:
+        return f"{display_name} ({reporter_citation})"
+    return display_name
+
+
+def _compact_evidence_quote(quote: str) -> str:
+    return " ".join(str(quote or "").split())
+
+
+def _case_reference_metadata(case_ref: dict[str, Any]) -> list[str]:
+    metadata: list[str] = []
+    relationships = [
+        _format_case_relationship(relationship)
+        for relationship in case_ref.get("relationships", [])
+        if str(relationship).strip()
+    ]
+    if not relationships and case_ref.get("relationship"):
+        relationships = [_format_case_relationship(case_ref["relationship"])]
+    if relationships:
+        metadata.append(f"Relationship: {', '.join(relationships)}")
+
+    score = case_ref.get("score")
+    if isinstance(score, (int, float)):
+        metadata.append(f"Score: {_format_case_score(float(score))}")
+    return metadata
+
+
+def _format_case_relationship(relationship: Any) -> str:
+    return str(relationship).replace("_", " ").strip().title()
+
+
+def _format_case_score(score: float) -> str:
+    return f"{score:.3f}".rstrip("0").rstrip(".")
+
+
+def _support_level_css_token(support_level: str) -> str:
+    return support_level.replace("_", "-")
+
+
+def _message_widget_key_suffix(message: dict[str, Any]) -> str:
+    stable_id = message.get("id") or message.get("interaction_id")
+    if stable_id:
+        return str(stable_id)
+    content = str(message.get("content") or "")
+    return str(abs(hash(content)))
 
 
 def upsert_conversation(conversation: dict[str, Any]) -> None:
@@ -1112,12 +1356,26 @@ def render_session_list(conversations: list[dict[str, Any]], selected_conversati
             label = conversation["title"]
             if selected_conversation_id == conversation["id"]:
                 label = f"{label} - Active"
-            if st.button(label, key=f"session_{conversation['id']}", use_container_width=True):
-                st.session_state["selected_conversation_id"] = conversation["id"]
-                st.session_state["conversation_messages"] = []
-                st.session_state["messages_loaded_for"] = None
-                st.session_state["last_pipeline"] = None
-                st.rerun()
+            session_col, delete_col = st.columns([4, 1], vertical_alignment="center")
+            with session_col:
+                if st.button(label, key=f"session_{conversation['id']}", use_container_width=True):
+                    st.session_state["selected_conversation_id"] = conversation["id"]
+                    st.session_state["conversation_messages"] = []
+                    st.session_state["messages_loaded_for"] = None
+                    st.session_state["last_pipeline"] = None
+                    st.rerun()
+            with delete_col:
+                st.markdown('<div class="vr-session-delete-anchor"></div>', unsafe_allow_html=True)
+                if st.button(
+                    " ",
+                    key=f"delete_session_{conversation['id']}",
+                    icon=":material/delete:",
+                    use_container_width=True,
+                ):
+                    try:
+                        delete_conversation(conversation["id"])
+                    except APIError as exc:
+                        handle_api_error(exc)
 
 
 def render_chat_panel(messages: list[dict[str, Any]]) -> None:
@@ -1225,11 +1483,37 @@ def render_home_page() -> None:
 
 def render_upload_page() -> None:
     require_auth()
-    render_header("Home", lambda: navigate(PAGE_HOME))
+    render_header("Home", lambda: set_page(PAGE_HOME))
     render_page_intro(
         "Document Uploads",
         "Add source documents before asking questions. Files are sent to the backend API and ingested server-side.",
     )
+
+    st.markdown("### Your Uploaded Documents")
+    try:
+        existing_uploads = list_uploads()
+    except APIError:
+        existing_uploads = []
+
+    if not existing_uploads:
+        st.info("No documents uploaded yet.")
+    else:
+        for doc in existing_uploads:
+            doc_col1, doc_col2, doc_col3 = st.columns([3, 1, 1])
+            with doc_col1:
+                st.markdown(f"**{doc.get('filename', 'Unknown')}**")
+                st.caption(f"Case: {doc.get('case_name', 'N/A')} | {doc.get('chunk_count', 0)} chunks")
+            with doc_col2:
+                pass
+            with doc_col3:
+                if st.button("Delete", key=f"delete_upload_{doc.get('document_id')}", use_container_width=True):
+                    try:
+                        delete_upload(doc.get("document_id"))
+                        st.rerun()
+                    except APIError as exc:
+                        st.error(f"Failed to delete: {exc}")
+
+    st.divider()
 
     icon_base64 = ""
     icon_path = Path(__file__).parent.parent.parent / "assets" / "upload.png"
@@ -1505,6 +1789,7 @@ def queue_query_submission() -> None:
     st.session_state["pending_query"] = {
         "query": query,
         "conversation_id": st.session_state.get("selected_conversation_id"),
+        "include_uploaded_chunks": bool(st.session_state.get("include_uploaded_chunks")),
     }
     st.session_state["query_progress"] = build_running_progress()
 
@@ -1523,7 +1808,11 @@ def process_pending_query() -> None:
     st.session_state["query_progress"] = build_running_progress()
     try:
         selected_id = pending_query.get("conversation_id")
-        result = submit_query_request(query, conversation_id=selected_id)
+        result = submit_query_request(
+            query,
+            conversation_id=selected_id,
+            include_uploaded_chunks=bool(pending_query.get("include_uploaded_chunks")),
+        )
         conversation = result["conversation"]
         conversation_id = conversation["id"]
 
@@ -1654,7 +1943,7 @@ def render_response_page() -> None:
         except APIError as exc:
             handle_api_error(exc)
 
-    render_header("Home", lambda: navigate(PAGE_HOME))
+    render_header("Home", lambda: set_page(PAGE_HOME))
 
     if st.session_state.get("upload_notice"):
         st.success(st.session_state["upload_notice"])
@@ -1687,6 +1976,11 @@ def render_response_page() -> None:
             placeholder="Start a Query...",
             height=100,
         )
+        st.toggle(
+            "Include uploaded chunks",
+            key="include_uploaded_chunks",
+            disabled=bool(st.session_state.get("is_generating")),
+        )
 
         st.markdown('<div class="vr-query-actions"></div>', unsafe_allow_html=True)
         stop_col, send_col = st.columns([1, 1.4])
@@ -1711,6 +2005,10 @@ def run_client_app() -> None:
     st.set_page_config(page_title="VerifRAG", layout="wide")
     initialize_state()
     apply_styles()
+
+    if st.query_params.get("vr_page") == PAGE_HOME:
+        st.session_state["page"] = PAGE_HOME if st.session_state["authenticated"] else PAGE_LOGIN
+        st.query_params.clear()
 
     if st.session_state["authenticated"] and st.session_state["page"] == PAGE_LOGIN:
         st.session_state["page"] = PAGE_HOME

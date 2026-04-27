@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.verification.claim_contract import support_level_from_verdict
+
+
+SUPPORT_LEVEL_ORDER = ("supported", "possibly_supported", "unsupported")
+
 
 def extract_claim_evaluations(interaction_detail: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not isinstance(interaction_detail, dict):
@@ -12,6 +17,43 @@ def extract_claim_evaluations(interaction_detail: dict[str, Any] | None) -> list
     if not isinstance(claims, list):
         return []
     return [claim for claim in claims if isinstance(claim, dict)]
+
+
+def group_evidence_case_references_by_support_level(
+    claims: list[dict[str, Any]] | None,
+) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, dict[tuple[str, str, str, str], dict[str, Any]]] = {
+        level: {} for level in SUPPORT_LEVEL_ORDER
+    }
+
+    for claim in claims or []:
+        if not isinstance(claim, dict):
+            continue
+        support_level = _claim_support_level(claim)
+        if support_level not in grouped:
+            continue
+
+        claim_text = _string_or_none(claim.get("text") or claim.get("claim_text"))
+        for evidence in _claim_evidence_items(claim):
+            case_ref = _case_reference_from_evidence(
+                evidence,
+                support_level=support_level,
+                claim_text=claim_text,
+            )
+            if case_ref is None:
+                continue
+
+            key = _case_reference_dedupe_key(case_ref)
+            existing = grouped[support_level].get(key)
+            if existing is None:
+                grouped[support_level][key] = case_ref
+            else:
+                _merge_case_reference(existing, case_ref)
+
+    return {
+        level: sorted(grouped[level].values(), key=_case_reference_sort_key)
+        for level in SUPPORT_LEVEL_ORDER
+    }
 
 
 def find_cases_for_claim(claim: dict[str, Any]) -> dict[str, Any]:
@@ -148,6 +190,166 @@ def _dedupe_and_sort_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _case_sort_key(case: dict[str, Any]) -> tuple[float, str]:
     return (_coerce_score(case.get("score")) or 0.0, str(case.get("source_label") or ""))
+
+
+def _claim_support_level(claim: dict[str, Any]) -> str:
+    annotation = claim.get("annotation")
+    if isinstance(annotation, dict):
+        support_level = annotation.get("support_level")
+        if support_level in SUPPORT_LEVEL_ORDER:
+            return str(support_level)
+
+    verification = claim.get("verification")
+    if isinstance(verification, dict):
+        return support_level_from_verdict(verification.get("verdict"))
+    return "unsupported"
+
+
+def _claim_evidence_items(claim: dict[str, Any]) -> list[dict[str, Any]]:
+    annotation = claim.get("annotation")
+    evidence = annotation.get("evidence") if isinstance(annotation, dict) else None
+    if not isinstance(evidence, list):
+        evidence = claim.get("linked_citations")
+    if not isinstance(evidence, list):
+        return []
+    return [item for item in evidence if isinstance(item, dict)]
+
+
+def _case_reference_from_evidence(
+    evidence: dict[str, Any],
+    *,
+    support_level: str,
+    claim_text: str | None,
+) -> dict[str, Any] | None:
+    citation_value = evidence.get("citation")
+    citation = citation_value if isinstance(citation_value, dict) else {}
+    reporter_citation = _first_string(
+        citation.get("citation"),
+        citation_value if isinstance(citation_value, str) else None,
+        evidence.get("reporter_citation"),
+        evidence.get("case_citation"),
+    )
+    doc_id = _first_string(evidence.get("doc_id"), citation.get("doc_id"))
+    chunk_id = _first_string(
+        evidence.get("chunk_id"),
+        citation.get("chunk_id"),
+        citation.get("id"),
+    )
+    case_name = _first_string(citation.get("case_name"), evidence.get("case_name"))
+    source_label = _first_string(
+        evidence.get("source_label"),
+        citation.get("source_label"),
+        citation.get("source_file"),
+        reporter_citation,
+        case_name,
+        doc_id,
+        chunk_id,
+    )
+
+    if not any((case_name, reporter_citation, source_label, doc_id, chunk_id)):
+        return None
+
+    relationship = _string_or_none(evidence.get("relationship"))
+    score = _coerce_score(evidence.get("score"))
+    claim_texts = [claim_text] if claim_text else []
+    relationships = [relationship] if relationship else []
+    evidence_quote = _first_string(
+        evidence.get("evidence_quote"),
+        citation.get("evidence_quote"),
+        citation.get("text"),
+        citation.get("text_preview"),
+    )
+    evidence_quotes = [evidence_quote] if evidence_quote else []
+
+    return {
+        "support_level": support_level,
+        "case_name": case_name,
+        "reporter_citation": reporter_citation,
+        "source_label": source_label,
+        "relationship": relationship,
+        "relationships": relationships,
+        "score": score,
+        "doc_id": doc_id,
+        "chunk_id": chunk_id,
+        "claim_text": claim_text,
+        "claim_texts": claim_texts,
+        "evidence_quote": evidence_quote,
+        "evidence_quotes": evidence_quotes,
+    }
+
+
+def _case_reference_dedupe_key(case_ref: dict[str, Any]) -> tuple[str, str, str, str]:
+    source_key = (
+        case_ref.get("source_label")
+        or case_ref.get("reporter_citation")
+        or case_ref.get("case_name")
+        or ""
+    )
+    return (
+        _case_reference_key_part(case_ref.get("support_level")),
+        _case_reference_key_part(case_ref.get("doc_id")),
+        _case_reference_key_part(case_ref.get("chunk_id")),
+        _case_reference_key_part(source_key),
+    )
+
+
+def _merge_case_reference(current: dict[str, Any], incoming: dict[str, Any]) -> None:
+    for field in ("case_name", "reporter_citation", "source_label", "doc_id", "chunk_id"):
+        if not current.get(field) and incoming.get(field):
+            current[field] = incoming[field]
+
+    for relationship in incoming.get("relationships", []):
+        _append_unique(current.setdefault("relationships", []), relationship)
+    if not current.get("relationship") and incoming.get("relationship"):
+        current["relationship"] = incoming["relationship"]
+
+    for claim_text in incoming.get("claim_texts", []):
+        _append_unique(current.setdefault("claim_texts", []), claim_text)
+    if not current.get("claim_text") and incoming.get("claim_text"):
+        current["claim_text"] = incoming["claim_text"]
+
+    for evidence_quote in incoming.get("evidence_quotes", []):
+        _append_unique(current.setdefault("evidence_quotes", []), evidence_quote)
+    if not current.get("evidence_quote") and incoming.get("evidence_quote"):
+        current["evidence_quote"] = incoming["evidence_quote"]
+
+    incoming_score = _coerce_score(incoming.get("score"))
+    current_score = _coerce_score(current.get("score"))
+    if incoming_score is not None and (current_score is None or incoming_score > current_score):
+        current["score"] = incoming_score
+
+
+def _case_reference_sort_key(case_ref: dict[str, Any]) -> tuple[float, str, str, str]:
+    score = _coerce_score(case_ref.get("score"))
+    score_key = -score if score is not None else 1.0
+    label = str(case_ref.get("case_name") or case_ref.get("source_label") or "")
+    citation = str(case_ref.get("reporter_citation") or "")
+    claim_text = str(case_ref.get("claim_text") or "")
+    return (score_key, label, citation, claim_text)
+
+
+def _case_reference_key_part(value: Any) -> str:
+    return str(value or "").strip().casefold()
+
+
+def _first_string(*values: Any) -> str | None:
+    for value in values:
+        text = _string_or_none(value)
+        if text:
+            return text
+    return None
+
+
+def _string_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _append_unique(values: list[Any], value: Any) -> None:
+    if value and value not in values:
+        values.append(value)
 
 
 def _coerce_score(score: Any) -> float | None:
