@@ -28,6 +28,7 @@ class Database:
     def connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
         try:
             yield connection
             connection.commit()
@@ -387,6 +388,14 @@ class Database:
                 (user_id,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def delete_conversation(self, conversation_id: int, user_id: int) -> bool:
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM conversations WHERE id = ? AND user_id = ?",
+                (conversation_id, user_id),
+            )
+        return cursor.rowcount > 0
 
     def list_interactions(self, conversation_id: int, user_id: int) -> list[dict[str, Any]]:
         with self.connect() as conn:
@@ -826,7 +835,7 @@ class Database:
             for relationship, chunk, score in link_specs:
                 if not isinstance(chunk, dict):
                     continue
-                chunk_id = chunk.get("id") or chunk.get("chunk_id")
+                chunk_id = chunk.get("source_chunk_id") or chunk.get("id") or chunk.get("chunk_id")
                 if not chunk_id:
                     continue
                 citation_row = citation_by_chunk_id.get(str(chunk_id))

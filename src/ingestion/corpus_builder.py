@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import AsyncIterator, Dict, List, Optional, Set
+from typing import AsyncIterator, Callable, Dict, List, Optional, Set
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -192,9 +192,9 @@ class CorpusBuilder:
         self.output_dir = Path(output_dir)
         self.sync_state_path = self.output_dir / ".sync_state.json"
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self._progress_callback = None
+        self._progress_callback: Callable[[int], None] | None = None
 
-    def set_progress_callback(self, callback):
+    def set_progress_callback(self, callback: Callable[[int], None] | None) -> None:
         """Set a callback(docs_fetched) for progress reporting."""
         self._progress_callback = callback
 
@@ -208,9 +208,9 @@ class CorpusBuilder:
         """
         Sync a single court. Works for both initial build and updates.
 
-        1. Load sync state → get last_sync timestamp for this court
-        2. If last_sync is None → initial build (fetch all)
-        3. If last_sync exists → incremental (fetch modified since)
+        1. Load sync state and get the last_sync timestamp for this court.
+        2. If last_sync is None, run an initial build.
+        3. If last_sync exists, fetch records modified since then.
         4. For each cluster, fetch opinions and build LegalDocuments
         5. Save updated sync state
         """
@@ -343,7 +343,7 @@ class CorpusBuilder:
         court_id: str,
         court_level: str,
     ) -> LegalDocument:
-        """Convert API cluster + opinion text → LegalDocument dataclass."""
+        """Convert an API cluster and opinion text to a LegalDocument."""
         cluster_id = cluster.get("id", "unknown")
         date_filed = cluster.get("date_filed")
         date_decided = None
@@ -426,7 +426,7 @@ class CorpusBuilder:
         Format citation from API citations list.
 
         e.g. [{"volume": 384, "reporter": "U.S.", "page": "436"}]
-              → "384 U.S. 436"
+              -> "384 U.S. 436"
         """
         if not citations:
             return None
