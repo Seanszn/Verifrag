@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.server
+      args:
+        NLI_MODEL: ${NLI_MODEL:-MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli}
     image: legalverifirag-api:latest
     container_name: legalverifirag-api
     environment:
@@ -19,6 +21,7 @@ services:
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
       TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-0}
       HF_LOCAL_FILES_ONLY: ${HF_LOCAL_FILES_ONLY:-0}
+      NLI_MODEL: ${NLI_MODEL:-MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli}
       COURTLISTENER_TOKEN: ${COURTLISTENER_TOKEN:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
