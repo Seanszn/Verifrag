@@ -10,7 +10,7 @@ services:
     environment:
       DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-local}
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
-      LLM_MODEL: ${LLM_MODEL:-llama3.2:3b}
+      LLM_MODEL: ${LLM_MODEL:-llama3.1:8b}
       OLLAMA_HOST: ${DOCKER_OLLAMA_HOST:-http://host.docker.internal:11434}
       API_HOST: "0.0.0.0"
       API_PORT: "8000"
@@ -22,6 +22,7 @@ services:
       TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-0}
       HF_LOCAL_FILES_ONLY: ${HF_LOCAL_FILES_ONLY:-0}
       NLI_MODEL: ${NLI_MODEL:-MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli}
+      NLI_DEVICE: ${NLI_DEVICE:-cuda}
       COURTLISTENER_TOKEN: ${COURTLISTENER_TOKEN:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -30,6 +31,13 @@ services:
     volumes:
       - ./data:/app/data
       - ./temp_uploads:/app/temp_uploads
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
       interval: 30s

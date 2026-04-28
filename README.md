@@ -75,13 +75,14 @@ For native local runs:
 
 - Python 3.10 or newer; Python 3.12 is used by the Docker images.
 - Ollama installed separately.
-- The configured Ollama model pulled locally, default `llama3.2:3b`.
+- The configured Ollama model pulled locally, default `llama3.1:8b`.
 - Enough disk space for Python packages, Hugging Face models, ChromaDB, and corpus data.
 - Optional CourtListener API token for corpus downloads.
 
 For Docker runs:
 
 - Docker Engine and Docker Compose v2.
+- NVIDIA drivers and NVIDIA Container Toolkit for CUDA NLI in Docker, unless you override `NLI_DEVICE=cpu`.
 - Ollama on the host, in the optional Compose profile, or on another reachable server.
 - Network access during image build if you want Docker to prefetch the configured NLI model.
 
@@ -104,7 +105,7 @@ Important settings:
 ```env
 DEPLOYMENT_MODE=local
 LLM_PROVIDER=ollama
-LLM_MODEL=llama3.2:3b
+LLM_MODEL=llama3.1:8b
 OLLAMA_HOST=http://localhost:11434
 LLM_MAX_TOKENS=1024
 LLM_REQUEST_TIMEOUT_SECONDS=150
@@ -155,7 +156,7 @@ Run commands from the `legalverifirag/` directory.
 ```powershell
 .\scripts\setup_local.ps1
 ollama serve
-ollama pull llama3.2:3b
+ollama pull llama3.1:8b
 .\scripts\run_api.ps1
 ```
 
@@ -177,7 +178,7 @@ http://127.0.0.1:8501
 chmod +x scripts/setup_local.sh scripts/run_api.sh scripts/run_local.sh
 ./scripts/setup_local.sh
 ollama serve
-ollama pull llama3.2:3b
+ollama pull llama3.1:8b
 ./scripts/run_api.sh
 ```
 
@@ -202,7 +203,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 python -m spacy download en_core_web_sm
 cp .env.example .env
-ollama pull llama3.2:3b
+ollama pull llama3.1:8b
 python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
 ```
 
@@ -283,7 +284,7 @@ Use this when Ollama is installed directly on the Docker host.
 ```powershell
 Copy-Item .env.example .env
 ollama serve
-ollama pull llama3.2:3b
+ollama pull llama3.1:8b
 docker compose up -d --build
 ```
 
@@ -292,7 +293,7 @@ Linux/macOS:
 ```bash
 cp .env.example .env
 ollama serve
-ollama pull llama3.2:3b
+ollama pull llama3.1:8b
 docker compose up -d --build
 ```
 
@@ -315,7 +316,7 @@ PowerShell:
 ```powershell
 $env:DOCKER_OLLAMA_HOST = "http://ollama:11434"
 docker compose --profile ollama up -d --build
-docker exec legalverifirag-ollama ollama pull llama3.2:3b
+docker exec legalverifirag-ollama ollama pull llama3.1:8b
 docker compose restart api
 ```
 
@@ -323,7 +324,7 @@ Linux/macOS:
 
 ```bash
 DOCKER_OLLAMA_HOST=http://ollama:11434 docker compose --profile ollama up -d --build
-docker exec legalverifirag-ollama ollama pull llama3.2:3b
+docker exec legalverifirag-ollama ollama pull llama3.1:8b
 docker compose restart api
 ```
 
@@ -508,6 +509,12 @@ NLI_BATCH_SIZE=1
 NLI_MAX_LENGTH=384
 NLI_UNLOAD_AFTER_REQUEST=true
 OLLAMA_NUM_CTX=4096
+```
+
+For Docker hosts without NVIDIA Container Toolkit or a CUDA-capable GPU, set:
+
+```env
+NLI_DEVICE=cpu
 ```
 
 ## Current Limits

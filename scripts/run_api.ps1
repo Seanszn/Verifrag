@@ -1,7 +1,7 @@
 param(
     [string]$VenvDir = "venv",
     [string]$NliModel = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli",
-    [string]$NliDevice = "cpu",
+    [string]$NliDevice = "cuda",
     [switch]$DownloadNliModel,
     [switch]$OfflineModels,
     [switch]$SkipVerification

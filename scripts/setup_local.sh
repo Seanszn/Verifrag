@@ -80,10 +80,10 @@ mkdir -p data/raw data/processed data/index data/eval
 
 if [[ "${SKIP_OLLAMA_PULL}" != "1" ]]; then
   if command -v ollama >/dev/null 2>&1; then
-    echo "Pulling Ollama model: llama3.2:3b"
-    ollama pull llama3.2:3b
+    echo "Pulling Ollama model: llama3.1:8b"
+    ollama pull llama3.1:8b
 else
-    echo "Warning: ollama not found. Install Ollama and run: ollama pull llama3.2:3b" >&2
+    echo "Warning: ollama not found. Install Ollama and run: ollama pull llama3.1:8b" >&2
 fi
 fi
 

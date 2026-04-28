@@ -12,7 +12,7 @@ services:
     environment:
       DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-local}
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
-      LLM_MODEL: ${LLM_MODEL:-llama3.2:3b}
+      LLM_MODEL: ${LLM_MODEL:-llama3.1:8b}
       OLLAMA_HOST: ${DOCKER_OLLAMA_HOST:-http://host.docker.internal:11434}
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1024}
       LLM_REQUEST_TIMEOUT_SECONDS: ${LLM_REQUEST_TIMEOUT_SECONDS:-150}
@@ -33,7 +33,7 @@ services:
       TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-0}
       HF_LOCAL_FILES_ONLY: ${HF_LOCAL_FILES_ONLY:-0}
       NLI_MODEL: ${NLI_MODEL:-MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli}
-      NLI_DEVICE: ${NLI_DEVICE:-cpu}
+      NLI_DEVICE: ${NLI_DEVICE:-cuda}
       CHROMA_PATH: /app/data/index/chroma
       CHROMA_COLLECTION: ${CHROMA_COLLECTION:-legal_chunks}
       CHROMA_DISTANCE: ${CHROMA_DISTANCE:-cosine}
@@ -46,6 +46,13 @@ services:
     volumes:
       - ./data:/app/data
       - ./temp_uploads:/app/temp_uploads
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
       interval: 30s

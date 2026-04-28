@@ -72,7 +72,7 @@ class LLMConfig:
     provider: LLMProvider = field(
         default_factory=lambda: LLMProvider(os.getenv("LLM_PROVIDER", "ollama"))
     )
-    model: str = os.getenv("LLM_MODEL", "llama3.2:3b")
+    model: str = os.getenv("LLM_MODEL", "llama3.1:8b")
     host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     temperature: float = 0.1
     max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "1024"))

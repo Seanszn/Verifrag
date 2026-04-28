@@ -68,10 +68,10 @@ if (Test-Path ".env") {
 if (-not $SkipOllamaPull) {
     $ollamaCmd = Get-Command ollama -ErrorAction SilentlyContinue
     if ($ollamaCmd) {
-        Write-Host "Pulling Ollama model: llama3.2:3b"
-        & ollama pull llama3.2:3b
+        Write-Host "Pulling Ollama model: llama3.1:8b"
+        & ollama pull llama3.1:8b
     } else {
-        Write-Warning "ollama not found. Install Ollama and run: ollama pull llama3.2:3b"
+        Write-Warning "ollama not found. Install Ollama and run: ollama pull llama3.1:8b"
     }
 }
 
