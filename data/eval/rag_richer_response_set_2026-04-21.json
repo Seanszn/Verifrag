@@ -1,0 +1,144 @@
+{
+  "name": "rag_richer_response_set_2026-04-21",
+  "created_on": "2026-04-21",
+  "description": "A live-system evaluation set designed to provoke richer, multi-paragraph responses with bullet lists while remaining grounded in corpus-backed Supreme Court cases.",
+  "items": [
+    {
+      "id": "rr_001",
+      "category": "rich_case_explanation",
+      "conversation_key": "burnett_rich_thread",
+      "query": "In Burnett v. United States, give a bottom line and then explain the posture, the dissent's concern, and the practical takeaway in at least two short paragraphs. Include a brief bullet list at the end.",
+      "target_case": "Burnett v. United States",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["denied certiorari", "denied review", "denied the petition"],
+        ["gorsuch", "dissent"]
+      ],
+      "forbidden_terms": ["esteras", "ieepa", "tariffs"]
+    },
+    {
+      "id": "rr_002",
+      "category": "rich_case_explanation",
+      "conversation_key": "esteras_rich_thread",
+      "query": "In Esteras v. United States, explain the rule, why retribution matters, and what district courts may not do when revoking supervised release. Use two short paragraphs and a bullet list of the rule's practical effects.",
+      "target_case": "Esteras v. United States",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["3553(a)(2)(A)", "retribution"],
+        ["may not consider", "cannot consider", "must not consider", "not relevant"]
+      ],
+      "forbidden_terms": ["new trial", "burgess", "tariffs"]
+    },
+    {
+      "id": "rr_003",
+      "category": "rich_case_explanation",
+      "conversation_key": "haina_rich_thread",
+      "query": "In Hain Celestial Group, Inc. v. Palmquist, explain why the jurisdictional defect was not cured and what the remand result means in practical terms. Give at least two short paragraphs and then a short bullet list.",
+      "target_case": "Hain Celestial Group, Inc. v. Palmquist",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["did not cure", "did not fix", "did not eliminate"],
+        ["jurisdictional defect", "defect at removal", "diversity jurisdiction"],
+        ["vacated", "remanded"]
+      ],
+      "forbidden_terms": ["burnett", "tariffs", "supervised release"]
+    },
+    {
+      "id": "rr_004",
+      "category": "rich_case_explanation",
+      "conversation_key": "learning_resources_rich_thread",
+      "query": "In Learning Resources, Inc. v. Trump, explain the holding on IEEPA tariffs, the Court's reasoning, and the practical consequence for presidential tariff power. Use two paragraphs and bullets.",
+      "target_case": "Learning Resources, Inc. v. Trump",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["ieepa"],
+        ["tariffs"],
+        ["does not authorize", "did not authorize", "not authorize"]
+      ],
+      "forbidden_terms": ["burnett", "supervised release", "retribution"]
+    },
+    {
+      "id": "rr_005",
+      "category": "rich_case_explanation",
+      "conversation_key": "royal_canin_rich_thread",
+      "query": "In Royal Canin U.S.A., Inc. v. Wullschleger, explain what happened after the amended complaint removed the federal claims and why remand mattered. Give two short paragraphs and a bullet list of the procedural steps.",
+      "target_case": "Royal Canin U.S.A., Inc. v. Wullschleger",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["amended complaint"],
+        ["federal-question jurisdiction", "federal question jurisdiction", "supplemental jurisdiction"],
+        ["remand", "state court"]
+      ],
+      "forbidden_terms": ["tariffs", "supervised release", "gorsuch"]
+    },
+    {
+      "id": "rr_006",
+      "category": "rich_case_explanation",
+      "conversation_key": "tiktok_rich_thread",
+      "query": "In TikTok Inc. v. Garland, explain the First Amendment issue, how the Court resolved it, and why the result mattered. Use at least two short paragraphs and then a brief bullet summary.",
+      "target_case": "TikTok Inc. v. Garland",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["first amendment"],
+        ["did not violate", "does not violate", "not violate", "upheld"]
+      ],
+      "forbidden_terms": ["tax", "ieepa", "supervised release"]
+    },
+    {
+      "id": "rr_007",
+      "category": "rich_case_explanation",
+      "conversation_key": "sev_county_rich_thread",
+      "query": "In Seven County Infrastructure Coalition v. Eagle County, explain the NEPA holding and why the Court emphasized deference. Use two short paragraphs and a bullet list of the practical rule for agencies.",
+      "target_case": "Seven County Infrastructure Coalition v. Eagle County",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["nepa"],
+        ["upstream", "downstream"],
+        ["separate", "not required", "does not require", "need not"]
+      ],
+      "forbidden_terms": ["supervised release", "tariffs", "title vii"]
+    },
+    {
+      "id": "rr_008",
+      "category": "rich_case_explanation",
+      "conversation_key": "ames_rich_thread",
+      "query": "In Ames v. Ohio Department of Youth Services, explain the Court's rule for majority-group Title VII plaintiffs and what changed about the background-circumstances approach. Give two paragraphs and bullet points.",
+      "target_case": "Ames v. Ohio Department of Youth Services",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["title vii"],
+        ["background-circumstances", "background circumstances"],
+        ["majority-group", "majority group"]
+      ],
+      "forbidden_terms": ["ieepa", "burnett", "tax"]
+    },
+    {
+      "id": "rr_009",
+      "category": "rich_case_explanation",
+      "conversation_key": "kousisis_rich_thread",
+      "query": "In Kousisis v. United States, explain the fraud holding, the economic-loss question, and the practical significance for prosecutors and defense counsel. Use two short paragraphs and a bullet list.",
+      "target_case": "Kousisis v. United States",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["fraud"],
+        ["economic loss"],
+        ["not require", "does not require", "need not prove"]
+      ],
+      "forbidden_terms": ["tariffs", "supervised release", "first amendment"]
+    },
+    {
+      "id": "rr_010",
+      "category": "rich_case_explanation",
+      "conversation_key": "emd_sales_rich_thread",
+      "query": "In E.M.D. Sales, Inc. v. Carrera, explain the burden of proof for the Fair Labor Standards Act exemption issue and why the standard matters in practice. Give two paragraphs and a short bullet list.",
+      "target_case": "E.M.D. Sales, Inc. v. Carrera",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["preponderance"],
+        ["flsa", "fair labor standards act"],
+        ["exemption"]
+      ],
+      "forbidden_terms": ["clear and convincing", "burnett", "tariffs"]
+    }
+  ]
+}

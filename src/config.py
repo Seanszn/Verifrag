@@ -18,7 +18,25 @@ except ImportError:
         return False
 
 
-load_dotenv()
+def env_flag(name: str, default: bool) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_int(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value)
+    except ValueError:
+        return default
+
+
+def huggingface_local_only_default() -> bool:
+    return env_flag("HF_LOCAL_FILES_ONLY", False) or env_flag("HF_HUB_OFFLINE", False) or env_flag("TRANSFORMERS_OFFLINE", False)
 
 # ============== PATHS ==============
 
@@ -28,6 +46,8 @@ RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 INDEX_DIR = DATA_DIR / "index"
 EVAL_DIR = DATA_DIR / "eval"
+
+load_dotenv(PROJECT_ROOT / ".env")
 
 # ============== DEPLOYMENT MODES ==============
 
@@ -52,10 +72,25 @@ class LLMConfig:
     provider: LLMProvider = field(
         default_factory=lambda: LLMProvider(os.getenv("LLM_PROVIDER", "ollama"))
     )
-    model: str = os.getenv("LLM_MODEL", "llama3.1:8b")
+    model: str = os.getenv("LLM_MODEL", "llama3.2:3b")
     host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     temperature: float = 0.1
-    max_tokens: int = 2048
+    max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "1024"))
+    request_timeout_seconds: int = int(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "150"))
+    # 8192 is a practical default for local 3B-class models on a 4 GB VRAM
+    # machine: materially more room for RAG context without the latency/memory
+    # jump of very large context windows.
+    num_ctx: int | None = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
+    num_batch: int | None = (
+        int(os.getenv("OLLAMA_NUM_BATCH"))
+        if os.getenv("OLLAMA_NUM_BATCH")
+        else None
+    )
+    num_gpu: int | None = (
+        int(os.getenv("OLLAMA_NUM_GPU"))
+        if os.getenv("OLLAMA_NUM_GPU")
+        else None
+    )
 
 
 @dataclass
@@ -66,6 +101,17 @@ class APIConfig:
     port: int = int(os.getenv("API_PORT", "8000"))
     token_ttl_hours: int = int(os.getenv("AUTH_TOKEN_TTL_HOURS", "24"))
     client_api_base_url: str = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+    connect_timeout_seconds: int = int(os.getenv("API_CONNECT_TIMEOUT_SECONDS", "10"))
+    request_timeout_seconds: int = int(os.getenv("API_REQUEST_TIMEOUT_SECONDS", "30"))
+    query_timeout_seconds: int = int(os.getenv("API_QUERY_TIMEOUT_SECONDS", "180"))
+
+
+@dataclass
+class LoggingConfig:
+    """Backend application logging configuration."""
+
+    level: str = os.getenv("APP_LOG_LEVEL", "INFO")
+    slow_request_threshold_ms: int = int(os.getenv("APP_SLOW_REQUEST_THRESHOLD_MS", "2000"))
 
 
 @dataclass
@@ -93,9 +139,19 @@ class VectorStoreConfig:
 class ModelConfig:
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_dim: int = 384
-    nli_model: str = "microsoft/deberta-v3-base-mnli-fever-anli"
+    nli_model: str = os.getenv("NLI_MODEL", "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli")
+    nli_device: Optional[str] = (
+        os.getenv("NLI_DEVICE").strip().lower()
+        if os.getenv("NLI_DEVICE")
+        else None
+    )
+    nli_batch_size: int = env_int("NLI_BATCH_SIZE", 8)
+    nli_max_length: int = env_int("NLI_MAX_LENGTH", 512)
+    nli_dtype: str = os.getenv("NLI_DTYPE", "auto").strip().lower()
+    nli_unload_after_request: bool = env_flag("NLI_UNLOAD_AFTER_REQUEST", False)
     nli_labels: List[str] = field(default_factory=lambda: ["contradiction", "neutral", "entailment"])
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    huggingface_local_files_only: bool = field(default_factory=huggingface_local_only_default)
 
 # ============== RETRIEVAL ==============
 
@@ -106,18 +162,32 @@ class RetrievalConfig:
     chunk_overlap: int = 64
     dense_k: int = 20
     sparse_k: int = 20
-    rerank_k: int = 10
+    rerank_k: int = int(os.getenv("RETRIEVAL_RERANK_K", "8"))
     rrf_k: int = 60
+    query_expansion_mode: str = os.getenv("QUERY_EXPANSION_MODE", "hybrid").strip().lower()
+    query_expansion_max_variants: int = env_int("QUERY_EXPANSION_MAX_VARIANTS", 5)
+    query_expansion_max_terms: int = env_int("QUERY_EXPANSION_MAX_TERMS", 16)
 
 # ============== VERIFICATION ==============
 
 
 @dataclass
 class VerificationConfig:
-    agg_alpha: float = 0.35
-    agg_beta: float = 0.20
-    agg_gamma: float = 0.30
-    agg_delta: float = 0.25
+    enabled: bool = env_flag("ENABLE_VERIFICATION", True)
+    verifier_mode: str = os.getenv("VERIFICATION_VERIFIER_MODE", "live").strip().lower()
+    fallback_to_heuristic_on_error: bool = env_flag("VERIFICATION_FALLBACK_TO_HEURISTIC", False)
+    agg_alpha: float = 0.40  # Entailment weight - increased from 0.35 to strengthen positive evidence
+    agg_beta: float = 0.20   # Support ratio weight
+    agg_gamma: float = 0.30  # Authority-weighted entailment weight
+    agg_delta: float = 0.20  # Contradiction penalty weight - decreased from 0.25
+    
+    # Rhetorical contradiction detection thresholds
+    # When high entailment (0.95+) from top-tier source coexists with high contradiction
+    # from lower tiers (dissents, concurrences), treat as rhetorical tension not falsity
+    rhetorical_contradiction_entailment_threshold: float = 0.95
+    rhetorical_contradiction_tier_gap: int = 2  # Tiers lower than support to qualify as rhetorical
+    rhetorical_contradiction_penalty_discount: float = 0.5  # Reduce penalty by 50% when detected
+    
     support_threshold: float = 0.5
     contradiction_threshold: float = 0.6
     authority_weights: Dict[str, float] = field(default_factory=lambda: {
@@ -129,8 +199,9 @@ class VerificationConfig:
         "state_trial": 0.35,
         "unknown": 0.40,
     })
-    threshold_verified: float = 0.92
-    threshold_supported: float = 0.82
+    threshold_verified: float = 0.70
+    threshold_supported: float = 0.55  # Restored to 0.55 - 0.50 caused false positives
+    threshold_possible_support: float = 0.40
     threshold_weak: float = 0.50
     threshold_contradicted: float = 0.60
     fuzzy_match_threshold: float = 85.0
@@ -165,13 +236,16 @@ class DataConfig:
 # ============== COST TRACKING ==============
 
 LLM_PRICING = {
+    "deepseek-r1:7b": {"input": 0.0, "output": 0.0},
     "llama3.1:8b": {"input": 0.0, "output": 0.0},
+    "llama3.2:3b": {"input": 0.0, "output": 0.0},
 }
 
 # ============== INSTANCES ==============
 
 LLM = LLMConfig()
 API = APIConfig()
+LOGGING = LoggingConfig()
 DATABASE = DatabaseConfig()
 VECTOR_STORE = VectorStoreConfig()
 MODELS = ModelConfig()

@@ -1,0 +1,260 @@
+{
+  "name": "scotus_future_query_set_30_mixed",
+  "created_on": "2026-04-14",
+  "source_case_file": "data/raw_nli_100/scotus_cases.jsonl",
+  "description": "A reusable mixed set of 30 evaluation queries: 25 case-targeted holding questions curated from the downloaded Supreme Court case files plus 5 deliberately off-target queries for future retrieval, generation, and verification tests.",
+  "query_style": "mixed case-targeted and off-target evaluation queries",
+  "selection_notes": [
+    "Queries were inspired by the downloaded case texts, especially syllabus holding language.",
+    "The set favors substantive merits decisions and clear procedural rulings over DIGs, publication pages, and duplicate revision variants.",
+    "Learning Resources, Inc. v. Trump uses the canonical case name rather than the revision-suffixed duplicate.",
+    "The final 5 queries are intentionally weakly related or unrelated to the downloaded cases and can be used as out-of-scope or false-positive checks."
+  ],
+  "queries": [
+    {
+      "query_id": "scotus_future_001",
+      "query": "In Galette v. New Jersey Transit Corp., what did the Supreme Court hold about whether NJ Transit is an arm of New Jersey for interstate sovereign immunity purposes?",
+      "expected_doc_id": "cl_10803604",
+      "case_name": "Galette v. New Jersey Transit Corp.",
+      "date_decided": "2026-03-04",
+      "topic": "whether NJ Transit is an arm of New Jersey for interstate sovereign immunity purposes"
+    },
+    {
+      "query_id": "scotus_future_002",
+      "query": "In Urias-Orellana v. Bondi, what did the Supreme Court hold about the standard of review courts of appeals must apply to the BIA's persecution determination on undisputed facts?",
+      "expected_doc_id": "cl_10803603",
+      "case_name": "Urias-Orellana v. Bondi",
+      "date_decided": "2026-03-04",
+      "topic": "the standard of review for the BIA's persecution determination on undisputed facts"
+    },
+    {
+      "query_id": "scotus_future_003",
+      "query": "In Geo Group, Inc. v. Menocal, what did the Supreme Court hold about whether denial of Yearsley protection is immediately appealable?",
+      "expected_doc_id": "cl_10800194",
+      "case_name": "Geo Group, Inc. v. Menocal",
+      "date_decided": "2026-02-25",
+      "topic": "whether denial of Yearsley protection is immediately appealable"
+    },
+    {
+      "query_id": "scotus_future_004",
+      "query": "In Villarreal v. Texas, what did the Supreme Court hold about whether a qualified conferral order during an overnight recess violates the Sixth Amendment right to counsel?",
+      "expected_doc_id": "cl_10800125",
+      "case_name": "Villarreal v. Texas",
+      "date_decided": "2026-02-25",
+      "topic": "whether a qualified conferral order during an overnight recess violates the Sixth Amendment right to counsel"
+    },
+    {
+      "query_id": "scotus_future_005",
+      "query": "In Hain Celestial Group, Inc. v. Palmquist, what did the Supreme Court hold about whether an erroneous post-removal dismissal cured the jurisdictional defect that existed at removal?",
+      "expected_doc_id": "cl_10799652",
+      "case_name": "Hain Celestial Group, Inc. v. Palmquist",
+      "date_decided": "2026-02-24",
+      "topic": "whether an erroneous post-removal dismissal cured a jurisdictional defect existing at removal"
+    },
+    {
+      "query_id": "scotus_future_006",
+      "query": "In Postal Service v. Konan, what did the Supreme Court hold about whether the FTCA postal exception preserves sovereign immunity for intentional nondelivery of mail?",
+      "expected_doc_id": "cl_10799651",
+      "case_name": "Postal Service v. Konan",
+      "date_decided": "2026-02-24",
+      "topic": "whether the FTCA postal exception preserves sovereign immunity for intentional nondelivery of mail"
+    },
+    {
+      "query_id": "scotus_future_007",
+      "query": "In Learning Resources, Inc. v. Trump, what did the Supreme Court hold about whether IEEPA authorizes the President to impose tariffs?",
+      "expected_doc_id": "cl_10796821",
+      "case_name": "Learning Resources, Inc. v. Trump",
+      "date_decided": "2026-02-20",
+      "topic": "whether IEEPA authorizes the President to impose tariffs"
+    },
+    {
+      "query_id": "scotus_future_008",
+      "query": "In Bouarfa v. Mayorkas, what did the Supreme Court hold about whether federal courts may review revocation of an approved visa petition based on a sham-marriage determination under 1155?",
+      "expected_doc_id": "cl_10776879",
+      "case_name": "Bouarfa v. Mayorkas",
+      "date_decided": "2024-12-10",
+      "topic": "whether federal courts may review revocation of an approved visa petition based on a sham-marriage determination under 1155"
+    },
+    {
+      "query_id": "scotus_future_009",
+      "query": "In E.M.D. Sales, Inc. v. Carrera, what did the Supreme Court hold about the burden of proof for establishing an FLSA exemption?",
+      "expected_doc_id": "cl_10776877",
+      "case_name": "E.M.D. Sales, Inc. v. Carrera",
+      "date_decided": "2025-01-15",
+      "topic": "the burden of proof for establishing an FLSA exemption"
+    },
+    {
+      "query_id": "scotus_future_010",
+      "query": "In Royal Canin U. S. A. v. Wullschleger, what did the Supreme Court hold about whether deleting the federal claims after removal strips supplemental jurisdiction and requires remand?",
+      "expected_doc_id": "cl_10776876",
+      "case_name": "Royal Canin U. S. A. v. Wullschleger",
+      "date_decided": "2025-01-15",
+      "topic": "whether deleting the federal claims after removal strips supplemental jurisdiction and requires remand"
+    },
+    {
+      "query_id": "scotus_future_011",
+      "query": "In TikTok Inc. v. Garland, what did the Supreme Court hold about whether the challenged divest-or-ban provisions violated the petitioners' First Amendment rights?",
+      "expected_doc_id": "cl_10776875",
+      "case_name": "TikTok Inc. v. Garland",
+      "date_decided": "2025-01-17",
+      "topic": "whether the challenged divest-or-ban provisions violated the petitioners' First Amendment rights"
+    },
+    {
+      "query_id": "scotus_future_012",
+      "query": "In Hungary v. Simon, what did the Supreme Court hold about whether alleging commingling of expropriated funds alone satisfies the FSIA expropriation exception's commercial nexus requirement?",
+      "expected_doc_id": "cl_10776873",
+      "case_name": "Hungary v. Simon",
+      "date_decided": "2025-02-21",
+      "topic": "whether alleging commingling of expropriated funds alone satisfies the FSIA expropriation exception's commercial nexus requirement"
+    },
+    {
+      "query_id": "scotus_future_013",
+      "query": "In Williams v. Reed, what did the Supreme Court hold about whether state courts may apply exhaustion rules to bar 1983 claims challenging administrative delay?",
+      "expected_doc_id": "cl_10776872",
+      "case_name": "Williams v. Reed",
+      "date_decided": "2025-02-21",
+      "topic": "whether state courts may apply exhaustion rules to bar 1983 claims challenging administrative delay"
+    },
+    {
+      "query_id": "scotus_future_014",
+      "query": "In Wisconsin Bell, Inc. v. United States ex rel. Heath, what did the Supreme Court hold about whether E-Rate reimbursement requests are claims under the False Claims Act?",
+      "expected_doc_id": "cl_10776871",
+      "case_name": "Wisconsin Bell, Inc. v. United States ex rel. Heath",
+      "date_decided": "2025-02-21",
+      "topic": "whether E-Rate reimbursement requests are claims under the False Claims Act"
+    },
+    {
+      "query_id": "scotus_future_015",
+      "query": "In Lackey v. Stinnie, what did the Supreme Court hold about whether plaintiffs who obtained only preliminary injunctive relief before mootness are prevailing parties under 1988(b)?",
+      "expected_doc_id": "cl_10776869",
+      "case_name": "Lackey v. Stinnie",
+      "date_decided": "2025-02-25",
+      "topic": "whether plaintiffs who obtained only preliminary injunctive relief before mootness are prevailing parties under 1988(b)"
+    },
+    {
+      "query_id": "scotus_future_016",
+      "query": "In Dewberry Group, Inc. v. Dewberry Engineers Inc., what did the Supreme Court hold about whether Lanham Act disgorgement may include profits of nonparty corporate affiliates?",
+      "expected_doc_id": "cl_10776868",
+      "case_name": "Dewberry Group, Inc. v. Dewberry Engineers Inc.",
+      "date_decided": "2025-02-26",
+      "topic": "whether Lanham Act disgorgement may include profits of nonparty corporate affiliates"
+    },
+    {
+      "query_id": "scotus_future_017",
+      "query": "In Waetzig v. Halliburton Energy Services, Inc., what did the Supreme Court hold about whether a voluntary dismissal without prejudice counts as a final proceeding under Rule 60(b)?",
+      "expected_doc_id": "cl_10776867",
+      "case_name": "Waetzig v. Halliburton Energy Services, Inc.",
+      "date_decided": "2025-02-26",
+      "topic": "whether a voluntary dismissal without prejudice counts as a final proceeding under Rule 60(b)"
+    },
+    {
+      "query_id": "scotus_future_018",
+      "query": "In City and County of San Francisco v. EPA, what did the Supreme Court hold about whether EPA may include end-result provisions in NPDES permits under 1311(b)(1)(C)?",
+      "expected_doc_id": "cl_10776866",
+      "case_name": "City and County of San Francisco v. EPA",
+      "date_decided": "2025-03-04",
+      "topic": "whether EPA may include end-result provisions in NPDES permits under 1311(b)(1)(C)"
+    },
+    {
+      "query_id": "scotus_future_019",
+      "query": "In Delligatti v. United States, what did the Supreme Court hold about whether intentionally causing injury or death by act or omission involves the use of physical force under 924(c)(3)(A)?",
+      "expected_doc_id": "cl_10776864",
+      "case_name": "Delligatti v. United States",
+      "date_decided": "2025-03-21",
+      "topic": "whether intentionally causing injury or death by act or omission involves the use of physical force under 924(c)(3)(A)"
+    },
+    {
+      "query_id": "scotus_future_020",
+      "query": "In Thompson v. United States, what did the Supreme Court hold about whether 1014 criminalizes misleading but literally true statements?",
+      "expected_doc_id": "cl_10776863",
+      "case_name": "Thompson v. United States",
+      "date_decided": "2025-03-21",
+      "topic": "whether 1014 criminalizes misleading but literally true statements"
+    },
+    {
+      "query_id": "scotus_future_021",
+      "query": "In Medical Marijuana, Inc. v. Horn, what did the Supreme Court hold about whether civil RICO permits treble damages for business or property loss resulting from personal injury?",
+      "expected_doc_id": "cl_10776859",
+      "case_name": "Medical Marijuana, Inc. v. Horn",
+      "date_decided": "2025-04-02",
+      "topic": "whether civil RICO permits treble damages for business or property loss resulting from personal injury"
+    },
+    {
+      "query_id": "scotus_future_022",
+      "query": "In Barnes v. Felix, what did the Supreme Court hold about how courts should assess excessive-force claims during a stop or arrest under the Fourth Amendment?",
+      "expected_doc_id": "cl_10776852",
+      "case_name": "Barnes v. Felix",
+      "date_decided": "2025-05-15",
+      "topic": "how courts should assess excessive-force claims during a stop or arrest under the Fourth Amendment"
+    },
+    {
+      "query_id": "scotus_future_023",
+      "query": "In Kousisis v. United States, what did the Supreme Court hold about whether federal fraud requires proof that the defendant intended economic loss?",
+      "expected_doc_id": "cl_10776850",
+      "case_name": "Kousisis v. United States",
+      "date_decided": "2025-05-22",
+      "topic": "whether federal fraud requires proof that the defendant intended economic loss"
+    },
+    {
+      "query_id": "scotus_future_024",
+      "query": "In Seven County Infrastructure Coalition v. Eagle County, what did the Supreme Court hold about whether NEPA required the Board to analyze upstream and downstream projects separate in time or place from the Uinta Basin Railway?",
+      "expected_doc_id": "cl_10776848",
+      "case_name": "Seven County Infrastructure Coalition v. Eagle County",
+      "date_decided": "2025-05-29",
+      "topic": "whether NEPA required the Board to analyze upstream and downstream projects separate in time or place from the Uinta Basin Railway"
+    },
+    {
+      "query_id": "scotus_future_025",
+      "query": "In Ames v. Ohio Department of Youth Services, what did the Supreme Court hold about whether Title VII permits a heightened background-circumstances rule for majority-group plaintiffs?",
+      "expected_doc_id": "cl_10776847",
+      "case_name": "Ames v. Ohio Department of Youth Services",
+      "date_decided": "2025-06-05",
+      "topic": "whether Title VII permits a heightened background-circumstances rule for majority-group plaintiffs"
+    },
+    {
+      "query_id": "scotus_future_026",
+      "query": "What is the best federal tax strategy for a freelancer who wants to reduce quarterly payments using LLC election tricks?",
+      "expected_doc_id": null,
+      "case_name": null,
+      "date_decided": null,
+      "topic": "freelancer tax strategy and LLC election planning",
+      "query_category": "off_target"
+    },
+    {
+      "query_id": "scotus_future_027",
+      "query": "Which recent Supreme Court case says a city must allow apartment buildings near every subway stop to reduce housing prices?",
+      "expected_doc_id": null,
+      "case_name": null,
+      "date_decided": null,
+      "topic": "urban housing and zoning near subway stops",
+      "query_category": "off_target"
+    },
+    {
+      "query_id": "scotus_future_028",
+      "query": "What did the Court decide about whether the FAA can ban all commercial drone deliveries in residential neighborhoods?",
+      "expected_doc_id": null,
+      "case_name": null,
+      "date_decided": null,
+      "topic": "FAA regulation of commercial drone deliveries in residential neighborhoods",
+      "query_category": "off_target"
+    },
+    {
+      "query_id": "scotus_future_029",
+      "query": "What is the leading Supreme Court authority on whether social media companies must give every user a chronological feed by default?",
+      "expected_doc_id": null,
+      "case_name": null,
+      "date_decided": null,
+      "topic": "social media feed design requirements",
+      "query_category": "off_target"
+    },
+    {
+      "query_id": "scotus_future_030",
+      "query": "Did the Supreme Court recently require hospitals to publish fixed cash prices for every emergency room procedure nationwide?",
+      "expected_doc_id": null,
+      "case_name": null,
+      "date_decided": null,
+      "topic": "hospital cash pricing transparency for emergency procedures",
+      "query_category": "off_target"
+    }
+  ]
+}

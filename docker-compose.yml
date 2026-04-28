@@ -1,0 +1,89 @@
+name: legalverifirag
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+      args:
+        NLI_MODEL: ${NLI_MODEL:-MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli}
+    image: legalverifirag-api:latest
+    container_name: legalverifirag-api
+    environment:
+      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-local}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_MODEL: ${LLM_MODEL:-llama3.2:3b}
+      OLLAMA_HOST: ${DOCKER_OLLAMA_HOST:-http://host.docker.internal:11434}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1024}
+      LLM_REQUEST_TIMEOUT_SECONDS: ${LLM_REQUEST_TIMEOUT_SECONDS:-150}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-4096}
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      API_CONNECT_TIMEOUT_SECONDS: ${API_CONNECT_TIMEOUT_SECONDS:-10}
+      API_REQUEST_TIMEOUT_SECONDS: ${API_REQUEST_TIMEOUT_SECONDS:-30}
+      API_QUERY_TIMEOUT_SECONDS: ${API_QUERY_TIMEOUT_SECONDS:-180}
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+      APP_SLOW_REQUEST_THRESHOLD_MS: ${APP_SLOW_REQUEST_THRESHOLD_MS:-2000}
+      AUTH_TOKEN_TTL_HOURS: ${AUTH_TOKEN_TTL_HOURS:-24}
+      DATABASE_PATH: /app/data/legalverifirag.db
+      ENABLE_VERIFICATION: ${ENABLE_VERIFICATION:-true}
+      VERIFICATION_VERIFIER_MODE: ${VERIFICATION_VERIFIER_MODE:-live}
+      VERIFICATION_FALLBACK_TO_HEURISTIC: ${VERIFICATION_FALLBACK_TO_HEURISTIC:-true}
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+      TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-0}
+      HF_LOCAL_FILES_ONLY: ${HF_LOCAL_FILES_ONLY:-0}
+      NLI_MODEL: ${NLI_MODEL:-MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli}
+      NLI_DEVICE: ${NLI_DEVICE:-cpu}
+      CHROMA_PATH: /app/data/index/chroma
+      CHROMA_COLLECTION: ${CHROMA_COLLECTION:-legal_chunks}
+      CHROMA_DISTANCE: ${CHROMA_DISTANCE:-cosine}
+      CHROMA_BATCH_SIZE: ${CHROMA_BATCH_SIZE:-100}
+      COURTLISTENER_TOKEN: ${COURTLISTENER_TOKEN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${API_PUBLISHED_PORT:-8000}:8000"
+    volumes:
+      - ./data:/app/data
+      - ./temp_uploads:/app/temp_uploads
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 45s
+      retries: 5
+    restart: unless-stopped
+
+  client:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    image: legalverifirag-client:latest
+    container_name: legalverifirag-client
+    environment:
+      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-local}
+      API_BASE_URL: ${CLIENT_API_BASE_URL:-http://api:8000}
+      API_CONNECT_TIMEOUT_SECONDS: ${API_CONNECT_TIMEOUT_SECONDS:-10}
+      API_REQUEST_TIMEOUT_SECONDS: ${API_REQUEST_TIMEOUT_SECONDS:-30}
+      API_QUERY_TIMEOUT_SECONDS: ${API_QUERY_TIMEOUT_SECONDS:-180}
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+    ports:
+      - "${CLIENT_PUBLISHED_PORT:-8501}:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: legalverifirag-ollama
+    profiles:
+      - ollama
+    ports:
+      - "${OLLAMA_PUBLISHED_PORT:-11434}:11434"
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  ollama:

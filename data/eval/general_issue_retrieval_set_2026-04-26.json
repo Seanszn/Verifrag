@@ -1,0 +1,185 @@
+{
+  "name": "general_issue_retrieval_set_2026-04-26",
+  "created_on": "2026-04-26",
+  "description": "General issue-lookup retrieval probes for paralegal research workflows. These prompts intentionally omit case names and citations. The goal is to retrieve relevant source documents and chunks for human review, not to force fully verified case-specific answers.",
+  "evaluation_goal": {
+    "retrieval": "Expected relevant cases should appear in the top retrieved chunks, preferably top 8.",
+    "generation": "Answers should frame results as exploratory research leads unless the retrieved chunks directly support the proposition.",
+    "verification": "Claims based on broad issue matching should be marked supported only when the retrieved text directly supports them; otherwise they should be possibly_supported or unsupported."
+  },
+  "recommended_metrics": {
+    "case_recall_at_8": "At least one expected_relevant_cases entry appears in the first 8 retrieved chunks.",
+    "case_precision_at_8": "At least half of the distinct case names in the first 8 chunks are listed in expected_relevant_cases or acceptable_related_cases.",
+    "answer_safety": "The answer identifies retrieved cases as research leads and avoids stating a holding unless the context directly supports it.",
+    "verification_ceiling": "Exploratory or analogical statements should not receive a stronger label than possibly_supported unless tied to direct evidence."
+  },
+  "items": [
+    {
+      "id": "gir_001",
+      "category": "constitutional_equal_protection",
+      "query": "What Supreme Court cases discuss race-conscious university admissions and equal protection?",
+      "expected_relevant_cases": [
+        "Students for Fair Admissions, Inc. v. President and Fellows of Harvard College"
+      ],
+      "expected_relevant_terms": ["race-conscious", "admissions", "equal protection"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case."
+    },
+    {
+      "id": "gir_002",
+      "category": "seventh_amendment_agency_enforcement",
+      "query": "What cases discuss whether the SEC can seek civil penalties in agency proceedings without a jury?",
+      "expected_relevant_cases": ["SEC v. Jarkesy"],
+      "expected_relevant_terms": ["SEC", "civil penalties", "jury", "agency proceedings"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case."
+    },
+    {
+      "id": "gir_003",
+      "category": "administrative_law_deference",
+      "query": "Find cases about Chevron deference and courts reviewing agency interpretations of statutes.",
+      "expected_relevant_cases": ["Loper Bright Enterprises v. Raimondo"],
+      "expected_relevant_terms": ["Chevron", "deference", "agency", "statutory interpretation"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case."
+    },
+    {
+      "id": "gir_004",
+      "category": "second_amendment",
+      "query": "What cases discuss gun possession restrictions for people under domestic violence restraining orders?",
+      "expected_relevant_cases": ["United States v. Rahimi"],
+      "expected_relevant_terms": ["gun possession", "domestic violence", "restraining order"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case."
+    },
+    {
+      "id": "gir_005",
+      "category": "environmental_clean_water_act",
+      "query": "Find Supreme Court authority on wetlands, adjacent waters, and the Clean Water Act.",
+      "expected_relevant_cases": ["Sackett v. EPA"],
+      "expected_relevant_terms": ["wetlands", "adjacent waters", "Clean Water Act"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case."
+    },
+    {
+      "id": "gir_006",
+      "category": "federal_remedies",
+      "query": "What cases discuss universal injunctions or nationwide injunctions against federal policy?",
+      "expected_relevant_cases": ["Trump v. CASA, Inc."],
+      "expected_relevant_terms": ["universal injunction", "nationwide injunction", "federal policy"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case."
+    },
+    {
+      "id": "gir_007",
+      "category": "first_amendment_standing",
+      "query": "Find cases about government pressure on social media platforms and First Amendment standing.",
+      "expected_relevant_cases": ["Murthy v. Missouri"],
+      "expected_relevant_terms": ["social media", "government pressure", "First Amendment", "standing"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case."
+    },
+    {
+      "id": "gir_008",
+      "category": "bankruptcy_releases",
+      "query": "What cases discuss bankruptcy reorganization plans releasing opioid claims against nondebtors?",
+      "expected_relevant_cases": ["Harrington v. Purdue Pharma L.P."],
+      "expected_relevant_terms": ["bankruptcy", "reorganization", "opioid", "nondebtor releases"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case."
+    },
+    {
+      "id": "gir_009",
+      "category": "eighth_amendment_homelessness",
+      "query": "Find cases about public camping bans, homelessness, and cruel and unusual punishment.",
+      "expected_relevant_cases": ["City of Grants Pass v. Johnson"],
+      "expected_relevant_terms": ["camping bans", "homelessness", "cruel and unusual punishment"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case."
+    },
+    {
+      "id": "gir_010",
+      "category": "first_amendment_compelled_speech",
+      "query": "What cases discuss whether website design can be compelled speech for same-sex wedding services?",
+      "expected_relevant_cases": ["303 Creative LLC v. Elenis"],
+      "expected_relevant_terms": ["website design", "compelled speech", "same-sex wedding"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case."
+    },
+    {
+      "id": "gir_011",
+      "category": "criminal_evidence_expert_mental_state",
+      "query": "Find cases about expert testimony on whether a defendant knew drugs were hidden in a car.",
+      "expected_relevant_cases": ["Diaz v. United States"],
+      "expected_relevant_terms": ["expert testimony", "mental state", "drugs", "car"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case."
+    },
+    {
+      "id": "gir_012",
+      "category": "confrontation_clause_expert_basis",
+      "query": "What cases discuss whether expert basis testimony violates the Confrontation Clause?",
+      "expected_relevant_cases": ["Smith v. Arizona"],
+      "expected_relevant_terms": ["expert basis testimony", "Confrontation Clause"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case."
+    },
+    {
+      "id": "gir_013",
+      "category": "criminal_sentencing_supervised_release",
+      "query": "Find cases about supervised release revocation and whether retribution can be considered.",
+      "expected_relevant_cases": ["Esteras v. United States"],
+      "expected_relevant_terms": ["supervised release", "revocation", "retribution", "3553(a)(2)(A)"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case."
+    },
+    {
+      "id": "gir_014",
+      "category": "federal_jurisdiction_removal",
+      "query": "What cases discuss removal jurisdiction and whether later dismissal cures a defect at removal?",
+      "expected_relevant_cases": ["Hain Celestial Group, Inc. v. Palmquist"],
+      "acceptable_related_cases": ["Riley v. Bondi"],
+      "expected_relevant_terms": ["removal jurisdiction", "dismissal", "defect at removal"],
+      "current_sparse_retrieval": "Strong expected hit with one acceptable related case appearing in top 8."
+    },
+    {
+      "id": "gir_015",
+      "category": "executive_power_tariffs",
+      "query": "Find cases about tariffs and whether emergency economic powers authorize them.",
+      "expected_relevant_cases": ["Learning Resources, Inc. v. Trump"],
+      "expected_relevant_terms": ["tariffs", "emergency economic powers", "IEEPA"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case."
+    },
+    {
+      "id": "gir_016",
+      "category": "administrative_law_standing_student_loans",
+      "query": "What cases discuss student loan forgiveness and whether states had standing to challenge it?",
+      "expected_relevant_cases": ["Biden v. Nebraska"],
+      "acceptable_related_cases": ["Department of Education v. Brown"],
+      "expected_relevant_terms": ["student loan forgiveness", "standing", "states"],
+      "current_sparse_retrieval": "Strong expected hit with related student-loan case also appearing."
+    },
+    {
+      "id": "gir_017",
+      "category": "voting_rights",
+      "query": "Find cases about Alabama congressional districts and Section 2 vote dilution under the Voting Rights Act.",
+      "expected_relevant_cases": ["Allen v. Milligan"],
+      "acceptable_related_cases": ["Alexander v. South Carolina State Conference of the NAACP"],
+      "expected_relevant_terms": ["Alabama", "Section 2", "vote dilution", "Voting Rights Act"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case; South Carolina redistricting case may also appear as related."
+    },
+    {
+      "id": "gir_018",
+      "category": "tax_constitutional_law",
+      "query": "What cases discuss whether Congress can tax unrealized income from foreign corporations?",
+      "expected_relevant_cases": ["Moore v. United States"],
+      "expected_relevant_terms": ["tax", "unrealized income", "foreign corporations"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case."
+    },
+    {
+      "id": "gir_019",
+      "category": "criminal_law_armed_career_criminal_act",
+      "query": "Find cases about whether a judge or jury decides if prior offenses happened on different occasions.",
+      "expected_relevant_cases": ["Erlinger v. United States"],
+      "expected_relevant_terms": ["judge or jury", "prior offenses", "different occasions"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case."
+    },
+    {
+      "id": "gir_020",
+      "category": "agency_funding_appropriations",
+      "query": "What cases discuss whether agency funding structures violate the Appropriations Clause?",
+      "expected_relevant_cases": [
+        "Consumer Financial Protection Bureau v. Community Financial Services Assn. of America, Ltd."
+      ],
+      "expected_relevant_terms": ["agency funding", "Appropriations Clause", "CFPB"],
+      "current_sparse_retrieval": "Strong top-8 hit on expected case."
+    }
+  ]
+}

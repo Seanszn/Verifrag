@@ -11,7 +11,7 @@ setup(
     package_dir={"": "src"},
     python_requires=">=3.10",
     install_requires=[
-        "torch>=2.0.0",
+        "torch==2.11.0+cu128",
         "transformers>=4.36.0",
         "sentence-transformers>=2.2.2",
         "spacy>=3.7.0",
@@ -29,6 +29,10 @@ setup(
         "python-dotenv>=1.0.0",
         "aiohttp>=3.9.0",
         "tenacity>=8.0.0",
+        "fastapi>=0.115.0",
+        "uvicorn>=0.30.0",
+        "pydantic>=2.7.0",
+        "python-multipart>=0.0.18",
         "streamlit>=1.30.0",
     ],
     extras_require={

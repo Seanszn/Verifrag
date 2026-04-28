@@ -1,0 +1,207 @@
+{
+  "name": "rag_mostly_normal_16_set_2026-04-21",
+  "created_on": "2026-04-21",
+  "description": "A larger live-system evaluation set with 12 normal case-targeted prompts and 4 edge prompts. It focuses on normal corpus-backed Supreme Court case questions while retaining representative edge cases for target resolution, follow-up grounding, issue-only lookup, and off-topic refusal.",
+  "items": [
+    {
+      "id": "rag_mn_001",
+      "category": "normal_case",
+      "conversation_key": "burnett_thread",
+      "query": "In Burnett v. United States, what did the Supreme Court do in the case?",
+      "target_case": "Burnett v. United States",
+      "expect_case_filter": true,
+      "expected_posture": {
+        "decision_type": "cert_denial",
+        "court_action": "denied certiorari",
+        "opinion_role": "dissent_from_denial",
+        "author": "Gorsuch"
+      },
+      "required_groups": [
+        ["denied certiorari", "denied review", "denied the petition"],
+        ["gorsuch", "dissent"]
+      ],
+      "forbidden_terms": ["esteras", "ieepa", "tariffs"]
+    },
+    {
+      "id": "rag_mn_002",
+      "category": "normal_case",
+      "conversation_key": "burnett_thread",
+      "query": "In Burnett v. United States, who wrote the dissent from the denial of certiorari?",
+      "target_case": "Burnett v. United States",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["gorsuch"]
+      ],
+      "forbidden_terms": ["esteras", "learning resources", "glossip"]
+    },
+    {
+      "id": "rag_mn_003",
+      "category": "normal_case",
+      "conversation_key": "esteras_thread",
+      "query": "In Esteras v. United States, what did the Supreme Court decide about supervised release revocation factors?",
+      "target_case": "Esteras v. United States",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["3553(a)(2)(A)", "retribution"],
+        ["may not consider", "cannot consider", "must not consider", "not relevant"]
+      ],
+      "forbidden_terms": ["new trial", "burgess", "tariffs"]
+    },
+    {
+      "id": "rag_mn_004",
+      "category": "normal_case",
+      "conversation_key": "esteras_thread",
+      "query": "In Esteras v. United States, could a court consider retribution when revoking supervised release?",
+      "target_case": "Esteras v. United States",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["no", "cannot", "may not", "must not"],
+        ["retribution", "3553(a)(2)(A)"]
+      ],
+      "forbidden_terms": ["new trial", "burgess", "tariffs"]
+    },
+    {
+      "id": "rag_mn_005",
+      "category": "normal_case",
+      "query": "In Hain Celestial Group, Inc. v. Palmquist, what did the Supreme Court hold about whether an erroneous post-removal dismissal cured the jurisdictional defect at removal?",
+      "target_case": "Hain Celestial Group, Inc. v. Palmquist",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["did not cure", "did not fix", "did not eliminate"],
+        ["jurisdictional defect", "defect at removal", "diversity jurisdiction"],
+        ["vacated", "remanded"]
+      ],
+      "forbidden_terms": ["new trial", "burnett", "tariffs"]
+    },
+    {
+      "id": "rag_mn_006",
+      "category": "normal_case",
+      "query": "In Learning Resources, Inc. v. Trump, what did the Supreme Court say about whether IEEPA authorizes tariffs?",
+      "target_case": "Learning Resources, Inc. v. Trump",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["ieepa"],
+        ["tariffs"],
+        ["does not authorize", "did not authorize", "not authorize"]
+      ],
+      "forbidden_terms": ["burnett", "supervised release", "retribution"]
+    },
+    {
+      "id": "rag_mn_007",
+      "category": "normal_case",
+      "query": "In E.M.D. Sales, Inc. v. Carrera, what burden of proof applies when an employer claims a Fair Labor Standards Act exemption?",
+      "target_case": "E.M.D. Sales, Inc. v. Carrera",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["preponderance"],
+        ["flsa", "fair labor standards act"],
+        ["exemption"]
+      ],
+      "forbidden_terms": ["clear and convincing", "burnett", "tariffs"]
+    },
+    {
+      "id": "rag_mn_008",
+      "category": "normal_case",
+      "query": "In Royal Canin U.S.A., Inc. v. Wullschleger, what happened to federal jurisdiction after the plaintiff amended the complaint to remove federal claims?",
+      "target_case": "Royal Canin U.S.A., Inc. v. Wullschleger",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["federal-question jurisdiction", "federal question jurisdiction", "supplemental jurisdiction"],
+        ["amended complaint"],
+        ["remand", "state court"]
+      ],
+      "forbidden_terms": ["tariffs", "supervised release", "gorsuch"]
+    },
+    {
+      "id": "rag_mn_009",
+      "category": "normal_case",
+      "query": "In TikTok Inc. v. Garland, did the Supreme Court hold that the challenged divestiture law violated the First Amendment?",
+      "target_case": "TikTok Inc. v. Garland",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["first amendment"],
+        ["did not violate", "does not violate", "not violate", "upheld"]
+      ],
+      "forbidden_terms": ["tax", "ieepa", "supervised release"]
+    },
+    {
+      "id": "rag_mn_010",
+      "category": "normal_case",
+      "query": "In Kousisis v. United States, did the federal fraud statutes require the government to prove economic loss?",
+      "target_case": "Kousisis v. United States",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["fraud"],
+        ["economic loss"],
+        ["not require", "does not require", "need not prove"]
+      ],
+      "forbidden_terms": ["tariffs", "supervised release", "first amendment"]
+    },
+    {
+      "id": "rag_mn_011",
+      "category": "normal_case",
+      "query": "In Ames v. Ohio Department of Youth Services, what did the Supreme Court say about the heightened background-circumstances rule for majority-group Title VII plaintiffs?",
+      "target_case": "Ames v. Ohio Department of Youth Services",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["title vii"],
+        ["background-circumstances", "background circumstances"],
+        ["majority-group", "majority group"]
+      ],
+      "forbidden_terms": ["ieepa", "burnett", "tax"]
+    },
+    {
+      "id": "rag_mn_012",
+      "category": "normal_case",
+      "query": "In Seven County Infrastructure Coalition v. Eagle County, what did the Supreme Court say about NEPA review and upstream or downstream projects?",
+      "target_case": "Seven County Infrastructure Coalition v. Eagle County",
+      "expect_case_filter": true,
+      "required_groups": [
+        ["nepa"],
+        ["upstream", "downstream"],
+        ["separate", "not required", "does not require", "need not"]
+      ],
+      "forbidden_terms": ["supervised release", "tariffs", "title vii"]
+    },
+    {
+      "id": "rag_mn_013",
+      "category": "edge_case",
+      "conversation_key": "burnett_thread",
+      "query": "Who wrote the separate opinion?",
+      "required_groups": [
+        ["gorsuch"]
+      ],
+      "forbidden_terms": ["esteras", "learning resources", "glossip"]
+    },
+    {
+      "id": "rag_mn_014",
+      "category": "edge_case",
+      "query": "What did 606 U.S. 185 hold about supervised release revocation factors?",
+      "required_groups": [
+        ["3553(a)(2)(A)", "retribution"],
+        ["may not consider", "cannot consider", "must not consider", "not relevant"]
+      ],
+      "forbidden_terms": ["new trial", "burgess", "tariffs"]
+    },
+    {
+      "id": "rag_mn_015",
+      "category": "edge_case",
+      "query": "What did the Supreme Court say about whether IEEPA lets the President impose tariffs?",
+      "required_groups": [
+        ["ieepa"],
+        ["tariffs"],
+        ["does not authorize", "did not authorize", "not authorize"]
+      ],
+      "forbidden_terms": ["burnett", "supervised release", "3553(a)(2)(A)"]
+    },
+    {
+      "id": "rag_mn_016",
+      "category": "edge_case",
+      "query": "What is the best federal tax strategy for a freelancer who wants to reduce quarterly payments using LLC election tricks?",
+      "required_groups": [
+        ["insufficient support", "insufficient", "not in the retrieved", "cannot determine from the retrieved"]
+      ],
+      "forbidden_terms": ["llc election", "quarterly estimated taxes", "s corp election", "tax strategy"]
+    }
+  ]
+}

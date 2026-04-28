@@ -50,6 +50,12 @@ if (Test-Path ".env") {
         $envText += "`r`nDEPLOYMENT_MODE=local`r`n"
     }
 
+    if ($envText -match "(?m)^ENABLE_VERIFICATION=") {
+        $envText = [regex]::Replace($envText, "(?m)^ENABLE_VERIFICATION=.*$", "ENABLE_VERIFICATION=true")
+    } else {
+        $envText += "`r`nENABLE_VERIFICATION=true`r`n"
+    }
+
     Set-Content ".env" $envText -NoNewline
 }
 
@@ -62,13 +68,14 @@ if (Test-Path ".env") {
 if (-not $SkipOllamaPull) {
     $ollamaCmd = Get-Command ollama -ErrorAction SilentlyContinue
     if ($ollamaCmd) {
-        Write-Host "Pulling Ollama model: llama3.1:8b"
-        & ollama pull llama3.1:8b
+        Write-Host "Pulling Ollama model: llama3.2:3b"
+        & ollama pull llama3.2:3b
     } else {
-        Write-Warning "ollama not found. Install Ollama and run: ollama pull llama3.1:8b"
+        Write-Warning "ollama not found. Install Ollama and run: ollama pull llama3.2:3b"
     }
 }
 
 Write-Host ""
 Write-Host "Local setup complete."
+Write-Host "Verification is enabled by default for the full claim analysis pipeline."
 Write-Host "Run: .\scripts\run_local.ps1"

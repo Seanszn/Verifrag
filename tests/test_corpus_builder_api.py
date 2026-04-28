@@ -5,6 +5,9 @@ import pytest
 from src.ingestion.corpus_builder import CourtListenerClient
 
 
+pytestmark = pytest.mark.smoke
+
+
 @pytest.mark.asyncio
 async def test_fetch_clusters_omits_deprecated_ordering_param():
     client = CourtListenerClient(token=None)
