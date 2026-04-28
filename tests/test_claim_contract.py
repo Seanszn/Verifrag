@@ -33,17 +33,20 @@ def test_normalize_claims_for_frontend_builds_annotation_and_links():
                     "id": "chunk-miranda",
                     "doc_id": "doc-miranda",
                     "citation": "384 U.S. 436",
+                    "text": "Miranda requires warnings before custodial interrogation.",
                 },
                 "best_supporting_chunk": {
                     "id": "chunk-miranda",
                     "doc_id": "doc-miranda",
                     "citation": "384 U.S. 436",
+                    "text": "Miranda requires warnings before custodial interrogation.",
                 },
                 "best_supporting_score": 0.91,
                 "best_contradicting_chunk": {
                     "id": "chunk-example",
                     "doc_id": "doc-example",
                     "citation": "123 Example 456",
+                    "text_preview": "Example narrows the rule.",
                 },
                 "best_contradiction_score": 0.22,
             },
@@ -64,6 +67,12 @@ def test_normalize_claims_for_frontend_builds_annotation_and_links():
         "supporting",
         "contradicting",
     ]
+    assert normalized_claims[0]["annotation"]["evidence"][0]["evidence_quote"] == (
+        "Miranda requires warnings before custodial interrogation."
+    )
+    assert normalized_claims[0]["annotation"]["evidence"][1]["evidence_quote"] == (
+        "Example narrows the rule."
+    )
 
 
 def test_normalize_claims_for_frontend_handles_unverified_claims():

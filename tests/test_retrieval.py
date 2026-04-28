@@ -8,6 +8,7 @@ import pytest
 from src.indexing.bm25_index import BM25Index
 from src.ingestion.document import LegalChunk
 from src.retrieval.hybrid_retriever import HybridRetriever
+from src.retrieval.query_expansion import QueryExpansionConfig
 
 
 pytestmark = pytest.mark.smoke
@@ -42,6 +43,20 @@ class _FakeSparseIndex:
     def search(self, query, k):
         self.calls.append((query, k))
         return self.hits[:k]
+
+
+class _QueryAwareSparseIndex:
+    def __init__(self, default_hits, query_hits):
+        self.default_hits = default_hits
+        self.query_hits = query_hits
+        self.calls = []
+
+    def search(self, query, k):
+        self.calls.append((query, k))
+        for needle, hits in self.query_hits.items():
+            if needle in query:
+                return hits[:k]
+        return self.default_hits[:k]
 
 
 class _FakeReranker:
@@ -252,3 +267,67 @@ def test_hybrid_retriever_falls_back_to_sparse_when_dense_search_fails():
     assert vector_store.calls == []
     assert sparse_index.calls == [("warrant query", 20)]
     assert retriever.last_backend_status() == "warning:dense:RuntimeError"
+
+
+def test_hybrid_retriever_expands_broad_research_query_and_reranks_with_original_query():
+    chunk_a = _chunk("a", "standing requires a concrete dispute", 0)
+    chunk_b = _chunk("b", "article iii injury in fact and redressability", 1)
+
+    sparse_index = _QueryAwareSparseIndex(
+        default_hits=[_hit(chunk_a, 12.0)],
+        query_hits={"injury in fact": [_hit(chunk_b, 10.0)]},
+    )
+    reranker = _FakeReranker({"a": 0.1, "b": 0.9})
+    retriever = HybridRetriever(
+        bm25_index=sparse_index,
+        reranker=reranker,
+        query_expansion_config=QueryExpansionConfig(mode="rule", max_variants=4, max_terms=12),
+    )
+    query = "find cases about standing for environmental plaintiffs"
+
+    results = retriever.retrieve(query, k=2)
+
+    assert [chunk.id for chunk in results] == ["b", "a"]
+    assert len(sparse_index.calls) > 1
+    assert sparse_index.calls[0] == (query, 20)
+    assert any("injury in fact" in call_query for call_query, _ in sparse_index.calls)
+    assert reranker.calls == [(query, ["a", "b"])]
+    meta = retriever.last_query_expansion_meta()
+    assert meta["status"] == "applied"
+    assert meta["sources"] == ["rule"]
+    assert meta["original_query"] == query
+    assert any("b" in item["sparse_chunk_ids"] for item in meta["retrieved_chunk_ids_per_variant"])
+
+
+def test_hybrid_retriever_does_not_expand_named_authority_query():
+    chunk_a = _chunk("a", "Miranda warning discussion", 0)
+    sparse_index = _FakeSparseIndex([_hit(chunk_a, 12.0)])
+    retriever = HybridRetriever(
+        bm25_index=sparse_index,
+        query_expansion_config=QueryExpansionConfig(mode="hybrid"),
+    )
+    query = "What did Miranda v. Arizona say about suppression?"
+
+    results = retriever.retrieve(query, k=1)
+
+    assert [chunk.id for chunk in results] == ["a"]
+    assert sparse_index.calls == [(query, 20)]
+    assert retriever.last_query_expansion_meta()["status"] == "not_applied:named_authority_query"
+
+
+def test_hybrid_retriever_uses_safe_corpus_facets_for_corpus_aware_expansion():
+    chunk_a = _chunk("a", "penalty discussion", 0)
+    sparse_index = _FakeSparseIndex([_hit(chunk_a, 12.0)])
+    retriever = HybridRetriever(
+        bm25_index=sparse_index,
+        query_expansion_config=QueryExpansionConfig(mode="corpus-aware", max_variants=3),
+    )
+
+    retriever.retrieve("find authorities about penalties", k=1)
+
+    meta = retriever.last_query_expansion_meta()
+    assert meta["status"] == "applied"
+    assert meta["sources"] == ["corpus-aware"]
+    assert "scotus" in meta["terms"]
+    assert "case" in meta["terms"]
+    assert all(" v. " not in variant for variant in meta["variants"])

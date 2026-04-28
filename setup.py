@@ -11,7 +11,7 @@ setup(
     package_dir={"": "src"},
     python_requires=">=3.10",
     install_requires=[
-        "torch>=2.0.0",
+        "torch==2.11.0+cu128",
         "transformers>=4.36.0",
         "sentence-transformers>=2.2.2",
         "spacy>=3.7.0",

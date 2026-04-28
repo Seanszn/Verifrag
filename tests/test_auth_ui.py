@@ -367,6 +367,98 @@ def test_query_and_history_are_loaded_from_backend(backend_stub: BackendStub):
     ]
 
 
+def test_previous_session_delete_button_removes_active_conversation(backend_stub: BackendStub):
+    backend_stub.queue(
+        "POST",
+        "/api/auth/login",
+        FakeResponse(
+            200,
+            {
+                "token": "token-delete",
+                "user": {"id": 9, "username": "delete_case_user", "created_at": "2026-04-14T12:00:00+00:00"},
+            },
+        ),
+    )
+    backend_stub.queue(
+        "GET",
+        "/api/conversations",
+        FakeResponse(
+            200,
+            [
+                {
+                    "id": 11,
+                    "user_id": 9,
+                    "title": "Existing Miranda Session",
+                    "created_at": "2026-04-14T12:05:00+00:00",
+                    "updated_at": "2026-04-14T12:06:00+00:00",
+                }
+            ],
+        ),
+    )
+    backend_stub.queue(
+        "GET",
+        "/api/conversations/11/messages",
+        FakeResponse(
+            200,
+            [
+                {
+                    "id": 31,
+                    "conversation_id": 11,
+                    "interaction_id": 71,
+                    "role": "user",
+                    "content": "Explain Miranda warnings",
+                    "created_at": "2026-04-14T12:05:01+00:00",
+                    "metadata_json": None,
+                }
+            ],
+        ),
+    )
+    backend_stub.queue(
+        "GET",
+        "/api/conversations/11/interactions",
+        FakeResponse(
+            200,
+            [
+                {
+                    "interaction": {
+                        "id": 71,
+                        "conversation_id": 11,
+                        "query": "Explain Miranda warnings",
+                        "response": "The court held that Miranda warnings are required.",
+                        "created_at": "2026-04-14T12:05:04+00:00",
+                    },
+                    "claims": [],
+                    "citations": [],
+                    "contradictions": [],
+                }
+            ],
+        ),
+    )
+    backend_stub.queue("DELETE", "/api/conversations/11", FakeResponse(204))
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.text_input(key="login_username").input("delete_case_user")
+    at.text_input(key="login_password").input("strong_password")
+    at.button(key="login_submit").click().run()
+    at.button(key="home_query").click().run()
+    at.button(key="session_11").click().run()
+    at.button(key="delete_session_11").click().run()
+
+    assert at.session_state["selected_conversation_id"] is None
+    assert at.session_state["conversation_messages"] == []
+    assert at.session_state["messages_loaded_for"] is None
+    assert at.session_state["last_pipeline"] is None
+    assert at.session_state["conversations"] == []
+    assert [call["path"] for call in backend_stub.calls] == [
+        "/api/auth/login",
+        "/api/conversations",
+        "/api/conversations/11/messages",
+        "/api/conversations/11/interactions",
+        "/api/conversations/11",
+    ]
+    assert backend_stub.calls[-1]["method"] == "DELETE"
+
+
 def test_submit_query_uses_backend_response_instead_of_placeholder(backend_stub: BackendStub):
     backend_stub.queue(
         "POST",
@@ -505,6 +597,7 @@ def test_submit_query_uses_backend_response_instead_of_placeholder(backend_stub:
         API.connect_timeout_seconds,
         API.query_timeout_seconds,
     )
+    assert backend_stub.calls[-1]["kwargs"]["json"]["include_uploaded_chunks"] is False
     assert backend_stub.calls[-1]["headers"]["X-Request-ID"]
 
 

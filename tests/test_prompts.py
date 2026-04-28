@@ -38,3 +38,18 @@ def test_build_rag_prompt_allows_hyphen_bullets_in_detailed_mode():
     assert "Then provide 2 to 4 short paragraphs or a compact hyphen-bullet list" in prompt
     assert "If using bullets, use simple hyphen bullets only." in prompt
     assert "Do not use bullets or numbered lists." not in prompt
+
+
+def test_build_rag_prompt_avoids_bracketed_context_labels():
+    prompt = build_rag_legal_prompt(
+        "According to the context, what is the tariff on apples?",
+        [
+            "The Supreme Court of Verifrag ruled that apples are widgets.",
+            "A widget is subject to a 5% tariff.",
+        ],
+    )
+
+    assert "Context item 1:" in prompt
+    assert "Context item 2:" in prompt
+    assert "[1]" not in prompt
+    assert "[2]" not in prompt

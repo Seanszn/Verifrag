@@ -7,6 +7,19 @@ ollama = pytest.importorskip("ollama")
 
 TEST_MODEL = LLM.model
 
+
+def skip_if_local_ollama_unavailable(exc: Exception) -> None:
+    message = str(exc).lower()
+    unavailable_markers = (
+        "not found",
+        "unable to allocate",
+        "runner process has terminated",
+        "model requires more system memory",
+    )
+    if any(marker in message for marker in unavailable_markers):
+        pytest.skip(f"Local Ollama model '{TEST_MODEL}' is unavailable: {exc}")
+
+
 def is_ollama_running():
     """Helper to check if Ollama daemon is active and model is present."""
     try:
@@ -25,9 +38,8 @@ def test_ollama_generation():
         assert isinstance(response, str)
         assert len(response) > 0
     except (ollama.ResponseError, OllamaBackendError) as exc:
-        if "not found" not in str(exc).lower():
-            raise
-        pytest.skip(f"Model '{TEST_MODEL}' not found in local Ollama instance.")
+        skip_if_local_ollama_unavailable(exc)
+        raise
 
 
 def test_ollama_backend_includes_configured_generation_options(monkeypatch):
@@ -90,6 +102,5 @@ def test_ollama_rag_context():
         # Current prompt rules require plain text rather than bracket citations.
         assert "[" not in response and "]" not in response
     except (ollama.ResponseError, OllamaBackendError) as exc:
-        if "not found" not in str(exc).lower():
-            raise
-        pytest.skip(f"Model '{TEST_MODEL}' not found in local Ollama instance.")
+        skip_if_local_ollama_unavailable(exc)
+        raise

@@ -24,8 +24,6 @@ COPY src /app/src
 COPY scripts /app/scripts
 COPY setup.py /app/setup.py
 COPY README.md /app/README.md
-COPY API_CALLS.md /app/API_CALLS.md
-COPY CURRENT_SYSTEM_SUMMARY.md /app/CURRENT_SYSTEM_SUMMARY.md
 COPY .env.example /app/.env.example
 
 RUN mkdir -p /app/data/raw /app/data/processed /app/data/index /app/data/eval /app/temp_uploads

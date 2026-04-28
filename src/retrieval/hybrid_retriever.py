@@ -12,6 +12,7 @@ import numpy as np
 from src.config import RETRIEVAL
 from src.indexing.embedder import Embedder
 from src.ingestion.document import LegalChunk
+from src.retrieval.query_expansion import QueryExpansionConfig, QueryExpansionPlan, build_query_expansion_plan
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,8 @@ class HybridRetriever:
         dense_k: int | None = None,
         sparse_k: int | None = None,
         rrf_k: int | None = None,
+        query_expansion_mode: str | None = None,
+        query_expansion_config: QueryExpansionConfig | None = None,
     ) -> None:
         resolved_bm25 = bm25_index if bm25_index is not None else sparse_index
         if vector_store is not None and embedder is None:
@@ -56,8 +59,20 @@ class HybridRetriever:
         self.dense_k = dense_k or RETRIEVAL.dense_k
         self.sparse_k = sparse_k or RETRIEVAL.sparse_k
         self.rrf_k = rrf_k or RETRIEVAL.rrf_k
+        self.query_expansion_config = query_expansion_config or QueryExpansionConfig(
+            mode=query_expansion_mode or RETRIEVAL.query_expansion_mode,
+            max_variants=RETRIEVAL.query_expansion_max_variants,
+            max_terms=RETRIEVAL.query_expansion_max_terms,
+        )
         self.last_dense_error: str | None = None
         self.last_sparse_error: str | None = None
+        self._last_query_expansion_plan = QueryExpansionPlan(
+            "",
+            self.query_expansion_config.mode,
+            ("",),
+            status="not_applied:not_run",
+        )
+        self._last_retrieval_variant_log: list[dict] = []
 
     def retrieve(
         self,
@@ -74,29 +89,13 @@ class HybridRetriever:
 
         self.last_dense_error = None
         self.last_sparse_error = None
+        self._last_retrieval_variant_log = []
         use_legacy_output = top_k is not None
         effective_rrf_k = int(rrf_k or self.rrf_k)
-        try:
-            dense_hits = self._dense_search(query, limit if use_legacy_output else self.dense_k)
-        except Exception as exc:
-            self.last_dense_error = exc.__class__.__name__
-            logger.warning(
-                "retrieval.dense_fallback error=%s query=%r",
-                self.last_dense_error,
-                " ".join(query.split())[:80],
-            )
-            dense_hits = []
-
-        try:
-            sparse_hits = self._sparse_search(query, limit if use_legacy_output else self.sparse_k)
-        except Exception as exc:
-            self.last_sparse_error = exc.__class__.__name__
-            logger.warning(
-                "retrieval.sparse_error error=%s query=%r",
-                self.last_sparse_error,
-                " ".join(query.split())[:80],
-            )
-            sparse_hits = []
+        dense_k = limit if use_legacy_output else self.dense_k
+        sparse_k = limit if use_legacy_output else self.sparse_k
+        raw_dense_hits = self._safe_dense_search(query, dense_k)
+        raw_sparse_hits = self._safe_sparse_search(query, sparse_k)
 
         if self.last_dense_error and self.last_sparse_error:
             raise RuntimeError(
@@ -104,7 +103,27 @@ class HybridRetriever:
                 f"dense={self.last_dense_error}; sparse={self.last_sparse_error}"
             )
 
-        fused = self._fuse_hits((dense_hits, sparse_hits), rrf_k=effective_rrf_k)
+        rank_lists: list[Sequence[_SearchHit]] = [raw_dense_hits, raw_sparse_hits]
+        self._log_variant_hits("raw", query, raw_dense_hits, raw_sparse_hits)
+        plan = build_query_expansion_plan(
+            query,
+            config=self.query_expansion_config,
+            corpus_metadata=[hit.metadata for hit in (*raw_dense_hits, *raw_sparse_hits)],
+        )
+        self._last_query_expansion_plan = plan
+        for variant in plan.variants[1:]:
+            dense_hits = self._safe_dense_search(variant, dense_k)
+            sparse_hits = self._safe_sparse_search(variant, sparse_k)
+            rank_lists.extend((dense_hits, sparse_hits))
+            self._log_variant_hits("expanded", variant, dense_hits, sparse_hits)
+
+        if self.last_dense_error and self.last_sparse_error and not any(rank_lists):
+            raise RuntimeError(
+                "dense and sparse retrieval failed: "
+                f"dense={self.last_dense_error}; sparse={self.last_sparse_error}"
+            )
+
+        fused = self._fuse_hits(rank_lists, rrf_k=effective_rrf_k)
 
         if not fused:
             return []
@@ -114,6 +133,12 @@ class HybridRetriever:
         chunks = [candidate.chunk for candidate in fused]
         reranked = self._rerank(query, chunks)
         return reranked[:limit]
+
+    def last_query_expansion_meta(self) -> dict:
+        return {
+            **self._last_query_expansion_plan.to_dict(),
+            "retrieved_chunk_ids_per_variant": self._last_retrieval_variant_log,
+        }
 
     def last_backend_status(self) -> str:
         if self.last_dense_error and self.last_sparse_error:
@@ -138,6 +163,52 @@ class HybridRetriever:
 
         raw_hits = self.bm25_index.search(query, k=k)
         return [self._coerce_hit(item) for item in raw_hits]
+
+    def _safe_dense_search(self, query: str, k: int) -> List[_SearchHit]:
+        try:
+            return self._dense_search(query, k)
+        except Exception as exc:
+            self.last_dense_error = exc.__class__.__name__
+            logger.warning(
+                "retrieval.dense_fallback error=%s query=%r",
+                self.last_dense_error,
+                " ".join(query.split())[:80],
+            )
+            return []
+
+    def _safe_sparse_search(self, query: str, k: int) -> List[_SearchHit]:
+        try:
+            return self._sparse_search(query, k)
+        except Exception as exc:
+            self.last_sparse_error = exc.__class__.__name__
+            logger.warning(
+                "retrieval.sparse_error error=%s query=%r",
+                self.last_sparse_error,
+                " ".join(query.split())[:80],
+            )
+            return []
+
+    def _log_variant_hits(
+        self,
+        source: str,
+        query: str,
+        dense_hits: Sequence[_SearchHit],
+        sparse_hits: Sequence[_SearchHit],
+    ) -> None:
+        self._last_retrieval_variant_log.append(
+            {
+                "source": source,
+                "query": query,
+                "dense_chunk_ids": [hit.chunk_id for hit in dense_hits],
+                "sparse_chunk_ids": [hit.chunk_id for hit in sparse_hits],
+                "document_ids": sorted(
+                    {
+                        str(hit.metadata.get("doc_id") or hit.chunk_id)
+                        for hit in (*dense_hits, *sparse_hits)
+                    }
+                ),
+            }
+        )
 
     def _fuse_hits(
         self,

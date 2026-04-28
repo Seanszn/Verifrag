@@ -10,6 +10,7 @@ The project is built around a FastAPI backend, a Streamlit client, local retriev
 - Conversation history with messages, interactions, verified claims, citations, and claim-citation links.
 - Retrieval-grounded legal answers from a public corpus.
 - Hybrid retrieval with BM25 sparse search, ChromaDB dense vector search, and Reciprocal Rank Fusion.
+- Conservative query expansion for broad legal-research queries, with named-case and citation queries kept exact.
 - Local Ollama answer generation.
 - Deterministic claim decomposition with response-span tracking.
 - Batched NLI claim verification with calibrated verdicts.
@@ -35,7 +36,7 @@ Browser
 
 The Streamlit app is a client. The backend owns authentication, uploads, query execution, persistence, retrieval, generation, and verification.
 
-See [arch.md](arch.md) for a detailed architecture and pipeline description.
+This README is the canonical operations guide for the current project layout.
 
 ## Repository Layout
 
@@ -65,8 +66,7 @@ legalverifirag/
 |-- docker-compose.yml
 |-- docker-compose.server.yml
 |-- Dockerfile.server
-|-- Dockerfile.client
-`-- arch.md
+`-- Dockerfile.client
 ```
 
 ## Requirements
@@ -120,6 +120,9 @@ API_QUERY_TIMEOUT_SECONDS=180
 DATABASE_PATH=data/legalverifirag.db
 CHROMA_PATH=data/index/chroma
 CHROMA_COLLECTION=legal_chunks
+QUERY_EXPANSION_MODE=hybrid
+QUERY_EXPANSION_MAX_VARIANTS=5
+QUERY_EXPANSION_MAX_TERMS=16
 
 ENABLE_VERIFICATION=true
 VERIFICATION_VERIFIER_MODE=live
@@ -141,6 +144,7 @@ Notes:
 - Set `NLI_DEVICE=cpu` on machines without CUDA.
 - Set `NLI_UNLOAD_AFTER_REQUEST=true` when GPU memory is tight and Ollama needs memory reclaimed after verification.
 - `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, and `HF_LOCAL_FILES_ONLY=1` should only be enabled after required Hugging Face models are already cached.
+- `QUERY_EXPANSION_MODE=hybrid` expands broad research-lead questions such as requests to find cases or authorities. Named-case and citation-specific questions are not expanded.
 
 ## Native Local Deployment
 
@@ -397,8 +401,6 @@ For LAN or small-firm deployment:
 4. Keep Ollama private to the server or Docker network.
 5. Put a reverse proxy such as nginx, Caddy, IIS, or a firm-approved gateway in front of the client for TLS.
 6. Back up `data/` regularly.
-
-See [NETWORK_DEPLOYMENT.md](NETWORK_DEPLOYMENT.md) for more operational examples.
 
 ## Health Checks And Operations
 

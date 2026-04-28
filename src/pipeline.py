@@ -593,6 +593,7 @@ class QueryPipeline:
             "public_query": effective_query,
         }
         public_rerank_meta = {"status": "not_applied:disabled_query_variant_only"}
+        public_query_expansion_meta = {"status": "not_applied:retriever_unavailable"}
         user_upload_retrieved = False
 
         retrieval_started = time.perf_counter()
@@ -618,6 +619,15 @@ class QueryPipeline:
         if self.retriever is not None:
             try:
                 public_chunks = self.retriever.retrieve(public_retrieval_query)
+                expansion_meta = getattr(self.retriever, "last_query_expansion_meta", None)
+                if callable(expansion_meta):
+                    public_query_expansion_meta = {
+                        **expansion_meta(),
+                        "merged_candidate_ids": [chunk.id for chunk in public_chunks],
+                        "rerank_query": public_retrieval_query,
+                    }
+                    if public_query_expansion_meta.get("status") == "applied":
+                        public_rerank_meta = public_query_expansion_meta
                 retriever_status = getattr(self.retriever, "last_backend_status", None)
                 if callable(retriever_status):
                     status_detail = retriever_status()
@@ -878,6 +888,7 @@ class QueryPipeline:
             "public_retrieval_query": public_retrieval_query,
             "public_retrieval_query_meta": public_retrieval_query_meta,
             "public_rerank_meta": public_rerank_meta,
+            "public_query_expansion_meta": public_query_expansion_meta,
             "user_upload_retrieval_backend_status": user_upload_status,
             "target_metadata_retrieval_status": target_metadata_meta["status"],
             "target_metadata_retrieval_count": len(target_metadata_chunks),

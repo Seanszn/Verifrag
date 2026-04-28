@@ -140,7 +140,8 @@ def test_pipeline_runs_real_verifier_logic_when_retrieval_is_available(
     assert meta["claims"][0]["verification"]["best_supporting_chunk"]["citation"] == "384 U.S. 436"
     assert meta["claims"][0]["verification"]["best_supporting_score"] == pytest.approx(0.93)
     assert meta["verification_scope_status"] == "applied:scoped"
-    assert meta["verification_chunk_ids"] == ["chunk_scotus"]
+    assert meta["verification_scope"]["scope"] == "sentence_evidence"
+    assert meta["verification_chunk_ids"] == ["chunk_scotus:sentence_evidence:0"]
     assert meta["claims"][0]["verification"]["best_contradicting_chunk"]["case_name"] == "Miranda v. Arizona"
     assert meta["claims"][0]["verification"]["best_contradiction_score"] == pytest.approx(0.02)
     assert meta["claims"][0]["verification"]["final_score"] > 0.5
@@ -222,6 +223,68 @@ def test_pipeline_runs_real_verifier_logic_when_retrieval_is_available(
         ).fetchone()
         assert conversation_state is not None
         assert "Explain Miranda warnings" in conversation_state["summary"]
+
+
+def test_pipeline_research_leads_query_reaches_rag_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = Database(tmp_path / "pipeline.db")
+    db.initialize()
+    user = db.create_user("alice", "hashed")
+    monkeypatch.setattr(
+        pipeline_module,
+        "load_user_upload_retriever",
+        lambda user_id, *, shared_embedder=None: (None, "unavailable:no_user_upload_index"),
+    )
+
+    class _ResearchLeadRetriever:
+        def retrieve(self, query: str, k: int = 10):
+            assert query == "Find cases about agency civil penalties and jury trial rights."
+            _ = k
+            return [
+                LegalChunk(
+                    id="agency_penalty_chunk",
+                    doc_id="agency_penalty_doc",
+                    text="The Court discussed civil penalties imposed by an agency.",
+                    chunk_index=0,
+                    doc_type="case",
+                    case_name="Securities and Exchange Commission v. Jarkesy",
+                    court_level="scotus",
+                ),
+                LegalChunk(
+                    id="jury_right_chunk",
+                    doc_id="jury_right_doc",
+                    text="The Court addressed when the Seventh Amendment preserves a jury trial.",
+                    chunk_index=0,
+                    doc_type="case",
+                    case_name="Tull v. United States",
+                    court_level="scotus",
+                ),
+            ]
+
+    llm = _FakeLLM()
+    pipeline = QueryPipeline(
+        db=db,
+        llm=llm,
+        retriever=_ResearchLeadRetriever(),
+        enable_verification=False,
+    )
+
+    result = pipeline.run(
+        user_id=user["id"],
+        query="Find cases about agency civil penalties and jury trial rights.",
+    )
+
+    meta = result["pipeline"]
+    assert meta["answer_mode"] == "research_leads"
+    assert meta["research_leads_mode"] is True
+    assert meta["research_leads_status"] == "applied:research_leads"
+    assert meta["pre_generation_refusal_status"] == "not_applied:answerable_or_targeted"
+    assert meta["query_grounding"]["query_intent"] == "research_leads"
+    assert len(llm.context_calls) == 1
+    assert llm.direct_queries == []
+    assert llm.context_calls[0][1][0].startswith("Evidence type: research-leads scope constraint")
 
 
 def test_pipeline_reports_skipped_verification_without_indices(
@@ -457,6 +520,50 @@ def test_pipeline_filters_low_value_connective_claims_before_verification():
     ]
 
 
+def test_pipeline_filters_malformed_claims_before_verification():
+    raw_claims = pipeline_module.decompose_document(
+        {
+            "id": "assistant_response",
+            "full_text": (
+                "Nor does it change just. "
+                "This \"did not include agriculture, manufacturing, mining, malum in se crime, or land use. "
+                "The majority holds that obtaining a preliminary injunction never entitles a plaintiff "
+                "to fees under Section 1988(b),. "
+                "The Court held that relief was required."
+            ),
+        }
+    )
+
+    filtered, skipped = pipeline_module._filter_claims_for_verification(raw_claims)
+
+    assert [claim.text for claim in filtered] == ["The Court held that relief was required."]
+    assert {item["reason"] for item in skipped} >= {
+        "malformed_dangling_clause",
+        "malformed_unbalanced_quote",
+        "malformed_trailing_punctuation",
+    }
+
+
+def test_pipeline_keeps_lowercase_causal_article_claims_for_verification():
+    raw_claims = pipeline_module.decompose_document(
+        {
+            "id": "assistant_response",
+            "full_text": (
+                "This defect was not cured because the removal petition did not include "
+                "a statement of jurisdiction as required by 28 U.S.C. Section 1441(b)."
+            ),
+        }
+    )
+
+    filtered, skipped = pipeline_module._filter_claims_for_verification(raw_claims)
+
+    assert [claim.text for claim in filtered] == [
+        "This defect was not cured.",
+        "The removal petition did not include a statement of jurisdiction as required by 28 U.S.C. Section 1441(b).",
+    ]
+    assert skipped == []
+
+
 def test_verification_scope_prefers_generation_source_chunks():
     source_chunk = LegalChunk(
         id="source_chunk",
@@ -491,6 +598,7 @@ def test_verification_scope_prefers_generation_source_chunks():
     assert meta == {
         "status": "applied:scoped",
         "scope": "generation_source_chunks",
+        "tiers": ["generation_source"],
     }
 
 
@@ -577,6 +685,318 @@ def test_consistency_guard_blocks_supported_claim_with_low_target_overlap():
     )
 
     assert guard["status"] == "blocked:low_target_evidence_overlap"
+
+
+def test_high_risk_guard_blocks_unresolved_semantic_false_positive():
+    evidence = LegalChunk(
+        id="warhol_chunk",
+        doc_id="warhol_doc",
+        text=(
+            "The artist then reproduced the image on a silkscreen and used it "
+            "to create a series of portraits."
+        ),
+        chunk_index=0,
+        doc_type="case",
+        case_name="Andy Warhol Foundation for Visual Arts, Inc. v. Goldsmith",
+        court_level="scotus",
+        citation="598 U.S. 508",
+    )
+
+    guard = pipeline_module._claim_evidence_consistency_guard(
+        (
+            "The Government's decision to fulfill its end of a bargain despite "
+            "actual knowledge of widespread DBE program violations is strong "
+            "evidence that those requirements are not material."
+        ),
+        evidence,
+        "SUPPORTED",
+        query_grounding={"status": "not_resolved:no_signal", "source": "unresolved"},
+        generation_context_meta={"status": "applied:missing_case_topic_fallback"},
+    )
+
+    assert guard["status"] == "blocked:high_risk_low_source_alignment"
+
+
+def test_high_risk_guard_blocks_related_authority_fallback_claim():
+    evidence = LegalChunk(
+        id="tyler_chunk",
+        doc_id="tyler_doc",
+        text=(
+            "Minnesota allowed the State to sell property to satisfy a tax debt, "
+            "and the taxpayer alleged that retaining the surplus violated the Takings Clause."
+        ),
+        chunk_index=0,
+        doc_type="case",
+        case_name="Tyler v. Hennepin County",
+        court_level="scotus",
+        citation="598 U.S. 631",
+    )
+
+    guard = pipeline_module._claim_evidence_consistency_guard(
+        (
+            "Based on related retrieved authorities, the Minnesota statute requiring "
+            "any surplus to revert to the owner is unconstitutional because it "
+            "extinguishes property rights in violation of the Takings Clause."
+        ),
+        evidence,
+        "POSSIBLE_SUPPORT",
+        query_grounding={
+            "status": "not_resolved:missing_explicit_case_topic_fallback",
+            "source": "explicit_case",
+            "explicit_case": "Galactic Mining Co. v. Mars Colony Authority",
+            "target_case": None,
+        },
+        generation_context_meta={"status": "applied:missing_case_topic_fallback"},
+    )
+
+    assert guard["status"] == "blocked:high_risk_related_authority_claim"
+
+
+def test_high_risk_guard_blocks_unresolved_citation_mismatch():
+    evidence = LegalChunk(
+        id="taamneh_chunk",
+        doc_id="taamneh_doc",
+        text="The statute does not apply unless the defendant knowingly provided substantial assistance.",
+        chunk_index=0,
+        doc_type="case",
+        case_name="Twitter, Inc. v. Taamneh",
+        court_level="scotus",
+        citation="598 U.S. 471",
+    )
+
+    guard = pipeline_module._claim_evidence_consistency_guard(
+        "The statute does not apply to payments or gifts to officials unless they are made corruptly.",
+        evidence,
+        "SUPPORTED",
+        query_grounding={
+            "status": "not_resolved:citation_unresolved",
+            "source": "citation_unresolved",
+            "target_citation": "999 U.S. 999",
+        },
+        generation_context_meta={"status": "not_applied:no_target_case"},
+    )
+
+    assert guard["status"] == "blocked:high_risk_unresolved_citation_mismatch"
+
+
+def test_high_risk_guard_does_not_low_overlap_block_research_leads():
+    evidence = LegalChunk(
+        id="tariff_chunk",
+        doc_id="tariff_doc",
+        text="The President's argument rests on statutory authorization under IEEPA and separation-of-powers principles.",
+        chunk_index=0,
+        doc_type="case",
+        case_name="Example Tariff Case",
+        court_level="scotus",
+    )
+
+    guard = pipeline_module._claim_evidence_consistency_guard(
+        'The broad meaning of the term "regulate" includes traditional means such as quotas, embargoes, and tariffs.',
+        evidence,
+        "POSSIBLE_SUPPORT",
+        query_grounding={
+            "status": "not_resolved:llm_route:research_leads",
+            "source": "llm_route:research_leads",
+            "query_intent": "research_leads",
+        },
+        generation_context_meta={"status": "applied:research_leads"},
+    )
+
+    assert guard["status"] == "passed"
+
+
+def test_high_risk_guard_allows_unresolved_claim_with_direct_sentence_support():
+    evidence = LegalChunk(
+        id="cedar_chunk",
+        doc_id="cedar_doc",
+        text="A party invoking force majeure must give written notice within fourteen calendar days after the event begins.",
+        chunk_index=0,
+        doc_type="user_upload",
+        source_file="cedar_supply_agreement.txt",
+    )
+
+    guard = pipeline_module._claim_evidence_consistency_guard(
+        "A party invoking force majeure must give written notice within fourteen calendar days after the event begins.",
+        evidence,
+        "SUPPORTED",
+        query_grounding={"status": "not_resolved:user_upload", "user_upload_mentioned": True},
+        generation_context_meta={"status": "applied:user_upload_context"},
+    )
+
+    assert guard["status"] == "passed"
+
+
+def test_high_risk_guard_does_not_apply_to_resolved_target_case():
+    evidence = LegalChunk(
+        id="loper_chunk",
+        doc_id="loper_doc",
+        text="The deference that Chevron requires of courts reviewing agency action cannot be squared with the APA.",
+        chunk_index=0,
+        doc_type="case",
+        case_name="Loper Bright Enterprises v. Raimondo",
+        court_level="scotus",
+        citation="603 U.S. 369",
+    )
+
+    guard = pipeline_module._claim_evidence_consistency_guard(
+        "The deference that Chevron requires of courts reviewing agency action cannot be squared with the APA.",
+        evidence,
+        "SUPPORTED",
+        query_grounding={
+            "status": "resolved:explicit_case",
+            "source": "explicit_case",
+            "target_case": "Loper Bright Enterprises v. Raimondo",
+        },
+        generation_context_meta={},
+    )
+
+    assert guard["status"] == "passed"
+
+
+def test_legal_polarity_guard_blocks_chevron_controls_after_loper_bright():
+    evidence = LegalChunk(
+        id="loper_chunk",
+        doc_id="loper_doc",
+        text="The deference that Chevron requires of courts reviewing agency action cannot be squared with the APA.",
+        chunk_index=0,
+        doc_type="case",
+        case_name="Loper Bright Enterprises v. Raimondo",
+        court_level="scotus",
+        citation="603 U.S. 369",
+    )
+
+    guard = pipeline_module._claim_evidence_consistency_guard(
+        "The rule now controlling agency interpretations is Chevron deference.",
+        evidence,
+        "SUPPORTED",
+        query_grounding={
+            "status": "resolved:explicit_case",
+            "source": "explicit_case",
+            "target_case": "Loper Bright Enterprises v. Raimondo",
+        },
+        generation_context_meta={},
+    )
+
+    assert guard["status"] == "blocked:legal_polarity_conflict"
+
+
+def test_research_leads_guard_demotes_weak_source_alignment():
+    evidence = LegalChunk(
+        id="standing_chunk",
+        doc_id="standing_doc",
+        text=(
+            "The causation requirement rules out attenuated links where government action "
+            "is far removed from predictable ripple effects."
+        ),
+        chunk_index=0,
+        doc_type="case",
+        case_name="FDA v. Alliance for Hippocratic Medicine",
+        court_level="scotus",
+    )
+
+    guard = pipeline_module._claim_evidence_consistency_guard(
+        "The fuel producers have Article III standing to challenge EPA's approval of California regulations.",
+        evidence,
+        "SUPPORTED",
+        query_grounding={
+            "status": "not_resolved:llm_route:research_leads",
+            "source": "llm_route:research_leads",
+            "query_intent": "research_leads",
+        },
+        generation_context_meta={"status": "applied:research_leads"},
+    )
+
+    assert guard["status"] == "demote:research_leads_weak_source_alignment"
+
+
+def test_research_leads_guard_keeps_strong_source_alignment():
+    evidence = LegalChunk(
+        id="fuel_chunk",
+        doc_id="fuel_doc",
+        text=(
+            "Fuel producers have Article III standing to challenge EPA approval of "
+            "California regulations because reduced gasoline demand is a concrete injury."
+        ),
+        chunk_index=0,
+        doc_type="case",
+        case_name="Diamond Alternative Energy, LLC v. EPA",
+        court_level="scotus",
+    )
+
+    guard = pipeline_module._claim_evidence_consistency_guard(
+        "The fuel producers have Article III standing to challenge EPA's approval of California regulations.",
+        evidence,
+        "SUPPORTED",
+        query_grounding={
+            "status": "not_resolved:llm_route:research_leads",
+            "source": "llm_route:research_leads",
+            "query_intent": "research_leads",
+        },
+        generation_context_meta={"status": "applied:research_leads"},
+    )
+
+    assert guard["status"] == "passed"
+
+
+def test_query_subject_guard_blocks_source_discipline_incidental_match():
+    evidence = LegalChunk(
+        id="sackett_chunk",
+        doc_id="sackett_doc",
+        text="This did not include agriculture, manufacturing, mining, malum in se crime, or land use.",
+        chunk_index=0,
+        doc_type="case",
+        case_name="Sackett v. EPA",
+        court_level="scotus",
+        citation="598 U.S. 651",
+    )
+
+    guard = pipeline_module._claim_evidence_consistency_guard(
+        "This did not include agriculture, manufacturing, mining, malum in se crime, or land use.",
+        evidence,
+        "SUPPORTED",
+        query_grounding={
+            "query": (
+                "Use only retrieved sources. If the retrieved sources do not mention "
+                "a holding about moon mining, say that instead. What is the moon mining holding?"
+            ),
+            "status": "resolved:retrieval_convergence",
+            "source": "retrieval_convergence",
+            "target_case": "Sackett v. EPA",
+        },
+        generation_context_meta={"status": "applied:sentence_evidence"},
+    )
+
+    assert guard["status"] == "blocked:query_subject_mismatch"
+    assert guard["missing_subject_tokens"] == ["moon"]
+
+
+def test_query_subject_guard_allows_source_discipline_subject_match():
+    evidence = LegalChunk(
+        id="moon_chunk",
+        doc_id="moon_doc",
+        text="The retrieved source states that moon mining rights are not addressed by the holding.",
+        chunk_index=0,
+        doc_type="case",
+        case_name="Example Space Mining Case",
+        court_level="scotus",
+    )
+
+    guard = pipeline_module._claim_evidence_consistency_guard(
+        "The retrieved source states that moon mining rights are not addressed by the holding.",
+        evidence,
+        "SUPPORTED",
+        query_grounding={
+            "query": (
+                "Use only retrieved sources. If the retrieved sources do not mention "
+                "a holding about moon mining, say that instead. What is the moon mining holding?"
+            ),
+            "status": "not_resolved:no_signal",
+            "source": "unresolved",
+        },
+        generation_context_meta={"status": "not_applied:no_target_case"},
+    )
+
+    assert guard["status"] == "passed"
 
 
 def test_pipeline_filters_prompt_chunks_to_target_case(
@@ -671,6 +1091,158 @@ def test_pipeline_filters_prompt_chunks_to_target_case(
             "other_chunk",
         ]
         assert [row["used_in_prompt"] for row in citation_rows] == [1, 1, 0]
+
+
+def test_pipeline_missing_explicit_case_refusal_is_not_overwritten(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = Database(tmp_path / "pipeline.db")
+    db.initialize()
+    user = db.create_user("alice", "hashed")
+    monkeypatch.setattr(
+        pipeline_module,
+        "load_user_upload_retriever",
+        lambda user_id, *, shared_embedder=None: (None, "unavailable:no_user_upload_index"),
+    )
+
+    class _UnrelatedRetriever:
+        def retrieve(self, query: str, k: int = 10):
+            _ = query, k
+            return [
+                LegalChunk(
+                    id="unrelated_chunk",
+                    doc_id="unrelated_doc",
+                    text="Held: The judgment of the court of appeals is reversed.",
+                    chunk_index=0,
+                    doc_type="case",
+                    case_name="Unrelated v. United States",
+                    court="scotus",
+                    court_level="scotus",
+                )
+            ]
+
+    llm = _FakeLLM()
+    pipeline = QueryPipeline(
+        db=db,
+        llm=llm,
+        retriever=_UnrelatedRetriever(),
+        enable_verification=False,
+    )
+
+    result = pipeline.run(
+        user_id=user["id"],
+        query="What did Missing v. Unknown hold?",
+    )
+
+    meta = result["pipeline"]
+    assert result["assistant_message"]["content"] == (
+        "Insufficient support in retrieved authorities to answer the question."
+    )
+    assert meta["answer_mode"] == "refusal"
+    assert meta["pre_generation_refusal_status"] == "applied:explicit_target_not_retrieved"
+    assert meta["response_override_status"] == "not_applied:pre_generation_refusal"
+    assert meta["cert_denial_guard_status"] == "not_applied:pre_generation_refusal"
+    assert llm.context_calls == []
+    assert llm.direct_queries == []
+
+
+def test_pipeline_missing_case_can_answer_related_topic_with_disclaimer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = Database(tmp_path / "pipeline.db")
+    db.initialize()
+    user = db.create_user("alice", "hashed")
+    monkeypatch.setattr(
+        pipeline_module,
+        "load_user_upload_retriever",
+        lambda user_id, *, shared_embedder=None: (None, "unavailable:no_user_upload_index"),
+    )
+
+    class _TopicLLM(_FakeLLM):
+        def generate_with_context(
+            self,
+            query: str,
+            context,
+            max_tokens=None,
+            *,
+            conversation_history=None,
+            case_posture=None,
+            response_depth="concise",
+        ) -> str:
+            self.context_calls.append((query, list(context), list(conversation_history or []), case_posture, response_depth))
+            return "Adverse possession requires possession that satisfies the elements stated in the retrieved authority."
+
+    class _TopicFallbackRetriever:
+        def __init__(self):
+            self.queries: list[str] = []
+
+        def retrieve(self, query: str, k: int = 10):
+            self.queries.append(query)
+            _ = k
+            if "adverse possession" not in query.lower():
+                return [
+                    LegalChunk(
+                        id="unrelated_chunk",
+                        doc_id="unrelated_doc",
+                        text="An unrelated criminal procedure case discusses harmless error.",
+                        chunk_index=0,
+                        doc_type="case",
+                        case_name="Other v. United States",
+                        court="scotus",
+                        court_level="scotus",
+                    )
+                ]
+            return [
+                LegalChunk(
+                    id="property_chunk",
+                    doc_id="property_doc",
+                    text=(
+                        "Property law recognizes adverse possession when possession is actual, "
+                        "open and notorious, exclusive, hostile, and continuous for the statutory period."
+                    ),
+                    chunk_index=0,
+                    doc_type="case",
+                    case_name="Property Owner v. Possessor",
+                    court="state",
+                    court_level="state_supreme",
+                )
+            ]
+
+    retriever = _TopicFallbackRetriever()
+    llm = _TopicLLM()
+    pipeline = QueryPipeline(
+        db=db,
+        llm=llm,
+        retriever=retriever,
+        enable_verification=False,
+    )
+
+    result = pipeline.run(
+        user_id=user["id"],
+        query="In Missing v. Unknown, what does property law say about adverse possession?",
+    )
+
+    response = result["assistant_message"]["content"]
+    meta = result["pipeline"]
+    assert response.startswith(
+        "I do not have Missing v. Unknown in the retrieved database, so I cannot say what that case held."
+    )
+    assert "Based on related retrieved authorities" in response
+    assert "adverse possession requires possession" in response.lower()
+    assert meta["answer_mode"] == "missing_case_topic_fallback"
+    assert meta["topic_fallback_used"] is True
+    assert meta["topic_fallback_status"] == "applied"
+    assert meta["missing_target_case"] == "Missing v. Unknown"
+    assert meta["target_case_answered"] is False
+    assert meta["prompt_case_filter_status"] == "applied:missing_case_topic_fallback"
+    assert meta["prompt_chunk_ids"] == ["property_chunk"]
+    assert len(retriever.queries) == 2
+    assert "Missing v. Unknown" not in retriever.queries[1]
+    assert len(llm.context_calls) == 1
+    assert "Missing target case: Missing v. Unknown" in llm.context_calls[0][1][0]
+    assert "Property law recognizes adverse possession" in llm.context_calls[0][1][1]
 
 
 def test_pipeline_metadata_target_retrieval_rescues_explicit_case_miss(
@@ -1497,7 +2069,41 @@ def test_load_default_retriever_uses_discovered_artifacts(
     assert captured["collection_name"] == "nli_100_chunks"
 
 
-def test_pipeline_prefers_user_upload_chunks_when_available(
+def test_pipeline_skips_user_upload_chunks_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = Database(tmp_path / "pipeline.db")
+    db.initialize()
+    user = db.create_user("alice", "hashed")
+
+    def unexpected_load_user_upload_retriever(user_id: int, *, shared_embedder=None):
+        _ = user_id, shared_embedder
+        raise AssertionError("User upload retriever should not load unless requested.")
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "load_user_upload_retriever",
+        unexpected_load_user_upload_retriever,
+    )
+
+    llm = _FakeLLM()
+    pipeline = QueryPipeline(
+        db=db,
+        llm=llm,
+        retriever=_FakeRetriever(),
+        enable_verification=False,
+    )
+
+    result = pipeline.run(user_id=user["id"], query="Explain Miranda warnings")
+
+    assert result["pipeline"]["include_uploaded_chunks"] is False
+    assert result["pipeline"]["user_upload_retrieval_backend_status"] == "disabled:not_requested"
+    assert result["pipeline"]["user_upload_retrieval_chunk_count"] == 0
+    assert all(chunk["doc_type"] != "user_upload" for chunk in result["pipeline"]["retrieved_chunks"])
+
+
+def test_pipeline_prefers_user_upload_chunks_when_requested(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -1534,13 +2140,333 @@ def test_pipeline_prefers_user_upload_chunks_when_available(
         enable_verification=False,
     )
 
-    result = pipeline.run(user_id=user["id"], query="Explain Miranda warnings")
+    result = pipeline.run(
+        user_id=user["id"],
+        query="Explain Miranda warnings",
+        include_uploaded_chunks=True,
+    )
 
+    assert result["pipeline"]["include_uploaded_chunks"] is True
     assert result["pipeline"]["user_upload_retrieval_backend_status"] == "ok"
     assert result["pipeline"]["user_upload_retrieval_chunk_count"] == 1
     assert result["pipeline"]["retrieved_chunks"][0]["doc_type"] == "user_upload"
     assert result["pipeline"]["retrieved_chunks"][0]["source_file"] == "motion.txt"
     assert "Source file: motion.txt" in llm.context_calls[0][1][0]
+
+
+def test_pipeline_rewrites_public_retrieval_query_for_upload_comparison(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = Database(tmp_path / "pipeline.db")
+    db.initialize()
+    user = db.create_user("alice", "hashed")
+
+    query = (
+        "Compare my uploaded Northstar Model H-17 draft to relevant corpus cases or precedent. "
+        "How does Dr. Lena Marquez's causation methodology compare to prior cases?"
+    )
+    upload_chunk = LegalChunk(
+        id="upload_motion:0",
+        doc_id="upload_motion",
+        text=(
+            "Riley v. Northstar Home Robotics, Inc. Dr. Lena Marquez failed to connect her "
+            "observations to a reliable causation methodology and failed to account for "
+            "alternative ignition sources."
+        ),
+        chunk_index=0,
+        doc_type="user_upload",
+        source_file="northstar_upload_probe.txt",
+    )
+    public_chunk = LegalChunk(
+        id="case_expert_reliability:0",
+        doc_id="case_expert_reliability",
+        text=(
+            "Expert testimony may be excluded when a causation opinion lacks reliable "
+            "methodology and fails to address alternative causes."
+        ),
+        chunk_index=0,
+        doc_type="case",
+        case_name="Example Expert Reliability Case",
+    )
+
+    class _UploadRetriever:
+        def retrieve(self, received_query: str, k: int = 10):
+            assert received_query == query
+            _ = k
+            return [upload_chunk]
+
+    class _RecordingPublicRetriever:
+        def __init__(self):
+            self.queries = []
+
+        def retrieve(self, received_query: str, k: int = 10):
+            _ = k
+            self.queries.append(received_query)
+            assert "reliable causation methodology" in received_query
+            assert "alternative causes" in received_query
+            assert "Northstar" not in received_query
+            assert "Marquez" not in received_query
+            return [public_chunk]
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "load_user_upload_retriever",
+        lambda user_id, *, shared_embedder=None: (_UploadRetriever(), "ok"),
+    )
+
+    retriever = _RecordingPublicRetriever()
+    llm = _FakeLLM()
+    pipeline = QueryPipeline(
+        db=db,
+        llm=llm,
+        retriever=retriever,
+        enable_verification=False,
+    )
+
+    result = pipeline.run(user_id=user["id"], query=query, include_uploaded_chunks=True)
+    meta = result["pipeline"]
+
+    assert len(retriever.queries) == 1
+    assert retriever.queries[0] == meta["public_retrieval_query"]
+    assert meta["public_retrieval_query"] != query
+    assert meta["public_retrieval_query_meta"]["status"] == "applied:user_upload_comparison_rewrite"
+    assert meta["prompt_case_filter_status"] == "applied:user_upload_with_comparison_authorities"
+    assert meta["prompt_chunk_ids"] == ["upload_motion:0", "case_expert_reliability:0"]
+
+
+def test_pipeline_keeps_public_chunks_for_upload_comparison_without_strict_rerank(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = Database(tmp_path / "pipeline.db")
+    db.initialize()
+    user = db.create_user("alice", "hashed")
+
+    query = (
+        "Compare my uploaded Northstar Model H-17 draft to relevant corpus cases or precedent. "
+        "How does Dr. Lena Marquez's causation methodology compare to prior cases?"
+    )
+    upload_chunk = LegalChunk(
+        id="upload_motion:0",
+        doc_id="upload_motion",
+        text=(
+            "Riley v. Northstar Home Robotics, Inc. Dr. Lena Marquez failed to connect her "
+            "observations to a reliable causation methodology and failed to account for "
+            "alternative ignition sources."
+        ),
+        chunk_index=0,
+        doc_type="user_upload",
+        source_file="northstar_upload_probe.txt",
+    )
+    weak_public_chunk = LegalChunk(
+        id="case_weak:0",
+        doc_id="case_weak",
+        text="The court described a theory of liability as substantial and not frivolous.",
+        chunk_index=0,
+        doc_type="case",
+        case_name="Unrelated Injunction Case",
+    )
+
+    class _UploadRetriever:
+        def retrieve(self, received_query: str, k: int = 10):
+            assert received_query == query
+            _ = k
+            return [upload_chunk]
+
+    class _WeakPublicRetriever:
+        def retrieve(self, received_query: str, k: int = 10):
+            _ = received_query, k
+            return [weak_public_chunk]
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "load_user_upload_retriever",
+        lambda user_id, *, shared_embedder=None: (_UploadRetriever(), "ok"),
+    )
+
+    llm = _FakeLLM()
+    pipeline = QueryPipeline(
+        db=db,
+        llm=llm,
+        retriever=_WeakPublicRetriever(),
+        enable_verification=False,
+    )
+
+    result = pipeline.run(user_id=user["id"], query=query, include_uploaded_chunks=True)
+    meta = result["pipeline"]
+
+    assert meta["public_rerank_meta"]["status"] == "not_applied:disabled_query_variant_only"
+    assert meta["public_retrieval_chunk_count"] == 1
+    assert meta["prompt_case_filter_status"] == "applied:user_upload_with_comparison_authorities"
+    assert meta["prompt_chunk_ids"] == ["upload_motion:0", "case_weak:0"]
+    assert meta["retrieved_chunks"][0]["doc_type"] == "user_upload"
+    assert any(chunk["id"] == "case_weak:0" for chunk in meta["retrieved_chunks"])
+
+
+def test_pipeline_verifies_generated_claims_against_user_upload_chunks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = Database(tmp_path / "pipeline.db")
+    db.initialize()
+    user = db.create_user("alice", "hashed")
+
+    upload_chunk = LegalChunk(
+        id="upload_motion:0",
+        doc_id="upload_motion",
+        text=(
+            "The uploaded motion states that the arbitration clause survives termination. "
+            "The uploaded motion does not say that the court granted summary judgment."
+        ),
+        chunk_index=0,
+        doc_type="user_upload",
+        source_file="motion.txt",
+    )
+
+    class _UploadRetriever:
+        def retrieve(self, query: str, k: int = 10):
+            assert query == "Using my uploaded motion, what does it say?"
+            _ = k
+            return [upload_chunk]
+
+    class _NoPublicRetriever:
+        def retrieve(self, query: str, k: int = 10):
+            assert query == "Using my uploaded motion, what does it say?"
+            _ = k
+            return []
+
+    class _UploadAnswerLLM:
+        def __init__(self):
+            self.context_calls = []
+
+        def generate_with_context(
+            self,
+            query: str,
+            context,
+            max_tokens=None,
+            *,
+            conversation_history=None,
+            case_posture=None,
+            response_depth="concise",
+        ) -> str:
+            _ = max_tokens, conversation_history, case_posture, response_depth
+            self.context_calls.append((query, list(context)))
+            return (
+                "The uploaded motion states that the arbitration clause survives termination. "
+                "The uploaded motion states that the court granted summary judgment."
+            )
+
+        def generate_legal_answer(self, query: str, *, conversation_history=None) -> str:
+            raise AssertionError("Expected retrieval-grounded generation for user upload.")
+
+    class _UploadVerifier:
+        def __init__(self):
+            self.calls = []
+
+        def verify_claims_batch(self, claims, chunks):
+            self.calls.append(([claim.text for claim in claims], [chunk.id for chunk in chunks]))
+            assert chunks
+            assert all(chunk.doc_type == "user_upload" for chunk in chunks)
+            assert all(
+                getattr(chunk, "verification_source_chunk_id", None) == "upload_motion:0"
+                for chunk in chunks
+            )
+            verdicts = []
+            for claim in claims:
+                if "survives termination" in claim.text:
+                    verdicts.append(
+                        AggregatedScore(
+                            final_score=0.80,
+                            is_contradicted=False,
+                            best_chunk_idx=0,
+                            best_chunk=upload_chunk,
+                            support_ratio=1.0,
+                            component_scores={
+                                "best_entailment": 0.90,
+                                "best_contradiction": 0.02,
+                            },
+                            best_contradicting_chunk_idx=0,
+                            best_contradicting_chunk=upload_chunk,
+                        )
+                    )
+                elif "granted summary judgment" in claim.text:
+                    verdicts.append(
+                        AggregatedScore(
+                            final_score=0.10,
+                            is_contradicted=False,
+                            best_chunk_idx=0,
+                            best_chunk=upload_chunk,
+                            support_ratio=0.0,
+                            component_scores={
+                                "best_entailment": 0.10,
+                                "best_contradiction": 0.05,
+                            },
+                            best_contradicting_chunk_idx=0,
+                            best_contradicting_chunk=upload_chunk,
+                        )
+                    )
+                else:
+                    raise AssertionError(f"Unexpected claim text: {claim.text}")
+            return verdicts
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "load_user_upload_retriever",
+        lambda user_id, *, shared_embedder=None: (_UploadRetriever(), "ok"),
+    )
+
+    llm = _UploadAnswerLLM()
+    verifier = _UploadVerifier()
+    pipeline = QueryPipeline(
+        db=db,
+        llm=llm,
+        retriever=_NoPublicRetriever(),
+        verifier=verifier,
+        enable_verification=True,
+    )
+
+    result = pipeline.run(
+        user_id=user["id"],
+        query="Using my uploaded motion, what does it say?",
+        include_uploaded_chunks=True,
+    )
+    meta = result["pipeline"]
+
+    assert meta["verification_backend_status"] == "ok"
+    assert meta["prompt_case_filter_status"] == "applied:user_upload_only"
+    assert meta["verification_scope_status"] == "applied:scoped"
+    assert meta["verification_scope"]["tiers"] == ["sentence_evidence"]
+    assert all(chunk_id.startswith("upload_motion:0:sentence_evidence:") for chunk_id in meta["verification_chunk_ids"])
+    assert meta["claim_support_summary"] == {
+        "raw_total": 1,
+        "total": 1,
+        "supported": 1,
+        "possibly_supported": 0,
+        "unsupported": 0,
+        "excluded_rhetorical": 0,
+        "unsupported_ratio": 0.0,
+    }
+    assert len(verifier.calls) == 2
+    initial_claims, initial_chunk_ids = verifier.calls[0]
+    assert all(chunk_id.startswith("upload_motion:0:sentence_evidence:") for chunk_id in initial_chunk_ids)
+    assert any("survives termination" in claim for claim in initial_claims)
+    assert any("granted summary judgment" in claim for claim in initial_claims)
+    repaired_claims, repaired_chunk_ids = verifier.calls[1]
+    assert all(chunk_id.startswith("upload_motion:0:sentence_evidence:") for chunk_id in repaired_chunk_ids)
+    assert all("granted summary judgment" not in claim for claim in repaired_claims)
+    assert "survives termination" in result["assistant_message"]["content"]
+    assert "granted summary judgment" not in result["assistant_message"]["content"]
+    assert meta["response_repair_status"] == "applied:unsupported_claim_repair"
+    assert meta["response_repair_meta"]["summary"] == {
+        "raw_total": 2,
+        "total": 2,
+        "supported": 1,
+        "possibly_supported": 0,
+        "unsupported": 1,
+        "excluded_rhetorical": 0,
+        "unsupported_ratio": 0.5,
+    }
 
 
 def test_pipeline_scopes_user_upload_retrieval_to_current_user(
@@ -1594,8 +2520,16 @@ def test_pipeline_scopes_user_upload_retrieval_to_current_user(
         enable_verification=False,
     )
 
-    owner_result = pipeline.run(user_id=owner["id"], query="Explain Miranda warnings")
-    other_result = pipeline.run(user_id=other["id"], query="Explain Miranda warnings")
+    owner_result = pipeline.run(
+        user_id=owner["id"],
+        query="Explain Miranda warnings",
+        include_uploaded_chunks=True,
+    )
+    other_result = pipeline.run(
+        user_id=other["id"],
+        query="Explain Miranda warnings",
+        include_uploaded_chunks=True,
+    )
 
     assert owner_result["pipeline"]["user_upload_retrieval_chunk_count"] == 1
     assert owner_result["pipeline"]["retrieval_used"] is True
@@ -1659,3 +2593,231 @@ def test_pipeline_surfaces_llm_runtime_diagnostics(
     assert result["pipeline"]["claim_count"] == 0
     assert result["pipeline"]["claims"] == []
     assert result["pipeline"]["claim_citation_links"] == []
+
+
+# =============================================================================
+# RAG Targeting and Evidence Quality Tests (Phase 1-4)
+# =============================================================================
+
+
+def test_pipeline_refuses_unresolved_explicit_citation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test that fake citations like 999 U.S. 999 are refused without LLM call."""
+    db = Database(tmp_path / "pipeline.db")
+    db.initialize()
+    user = db.create_user("alice", "hashed")
+    monkeypatch.setattr(
+        pipeline_module,
+        "load_user_upload_retriever",
+        lambda user_id, *, shared_embedder=None: (None, "unavailable:no_user_upload_index"),
+    )
+
+    # Retriever returns unrelated chunks (simulating what happens with 999 U.S. 999)
+    class _UnrelatedRetriever:
+        def retrieve(self, query: str, k: int = 10):
+            _ = query, k
+            return [
+                LegalChunk(
+                    id="unrelated_chunk",
+                    doc_id="unrelated_doc",
+                    text="Some unrelated case about corporate liability.",
+                    chunk_index=0,
+                    doc_type="case",
+                    case_name="Acme Corp v. Smith",
+                    court="scotus",
+                    court_level="scotus",
+                    citation="555 U.S. 123",
+                )
+            ]
+
+    llm = _FakeLLM()
+    pipeline = QueryPipeline(
+        db=db,
+        llm=llm,
+        retriever=_UnrelatedRetriever(),
+        enable_verification=False,
+    )
+
+    result = pipeline.run(
+        user_id=user["id"],
+        query="Summarize 999 U.S. 999 and explain its rule.",
+    )
+
+    # Should refuse without calling LLM
+    assert result["assistant_message"]["content"] == (
+        "I could not find 999 U.S. 999 in the retrieved database, so I cannot summarize its rule."
+    )
+    assert result["pipeline"]["answer_mode"] == "refusal"
+    assert result["pipeline"]["pre_generation_refusal_status"] == "applied:explicit_citation_not_retrieved"
+    assert result["pipeline"]["query_grounding_status"] == "not_resolved:citation_unresolved"
+    # No LLM context calls should be made
+    assert llm.context_calls == []
+    assert llm.direct_queries == []
+
+
+def test_pipeline_resolves_known_citation_with_normalized_spacing():
+    """Test that citation variants like 606 U.S. 185, 606 U. S. 185, 606 US 185 all resolve."""
+    # Create chunks with different citation formats
+    esteras_chunks = [
+        LegalChunk(
+            id="esteras_chunk_0",
+            doc_id="esteras_doc",
+            text="District courts cannot consider section 3553(a)(2)(A) when revoking supervised release.",
+            chunk_index=0,
+            doc_type="case",
+            case_name="Esteras v. United States",
+            citation="606 U.S. 185",  # Standard format
+            court_level="scotus",
+        ),
+    ]
+
+    citation_variants = [
+        "606 U.S. 185",
+        "606 U. S. 185",  # Extra space
+        "606 US 185",     # No periods
+    ]
+
+    for variant in citation_variants:
+        grounding = pipeline_module._resolve_query_grounding(
+            f"What did {variant} hold about supervised release?",
+            esteras_chunks,
+        )
+        assert grounding["status"] == "resolved:citation"
+        assert grounding["target_case"] == "Esteras v. United States"
+        assert grounding["target_citation"] == variant
+
+
+def test_burnett_sentence_evidence_filters_fragments():
+    """Test that fragmented sentences like 'is the right to...' are filtered."""
+    # Chunks with known bad fragments from Burnett corpus
+    burnett_chunks_with_fragments = [
+        LegalChunk(
+            id="burnett_chunk_0",
+            doc_id="burnett_doc",
+            text=(
+                "The petition for a writ of certiorari is denied. "
+                "JUSTICE GORSUCH, dissenting from the denial of certiorari."
+            ),
+            chunk_index=0,
+            doc_type="case",
+            case_name="Burnett v. United States",
+            court_level="scotus",
+        ),
+        LegalChunk(
+            id="burnett_chunk_bad",
+            doc_id="burnett_doc",
+            text=(
+                "is the right to have a jury decide any contested facts "
+                "under the reasonable doubt standard. Should the government "
+                "seek prison time beyond that because of his latest alleged "
+                "supervised release violations, Mr. Burnett submitted, the "
+                "Sixth Amendment required the government to prove its case."
+            ),
+            chunk_index=1,
+            doc_type="case",
+            case_name="Burnett v. United States",
+            court_level="scotus",
+        ),
+    ]
+
+    query = "In Burnett v. United States, what did the Supreme Court decide about supervised release?"
+    query_tokens = pipeline_module._content_tokens(query)
+
+    # Score sentences from both chunks
+    scores = []
+    for chunk in burnett_chunks_with_fragments:
+        for idx, sentence in enumerate(pipeline_module._split_into_sentences(chunk.text)):
+            score = pipeline_module._score_named_case_evidence_sentence(
+                query_tokens=query_tokens,
+                sentence=sentence,
+                chunk=chunk,
+                target_case="Burnett v. United States",
+                sentence_index=idx,
+            )
+            scores.append((sentence[:60], score))
+
+    # Bad fragments should score 0.0
+    bad_fragments = [
+        "is the right to have a jury decide any contested facts",
+        "Should the government seek prison time beyond that",
+    ]
+    
+    for sentence_preview, score in scores:
+        for bad_fragment in bad_fragments:
+            if bad_fragment.lower() in sentence_preview.lower():
+                assert score == 0.0, f"Bad fragment should score 0: {sentence_preview}"
+
+    # Good sentences should have positive scores
+    good_sentences = [s for s, score in scores if score > 0]
+    assert len(good_sentences) > 0, "Should have some valid sentences"
+
+
+def test_canonical_answer_fact_for_burnett_cert_denial():
+    """Test that Burnett cert denial generates correct canonical fact."""
+    evidence_sentences = [
+        {"sentence": "The petition for a writ of certiorari is denied."},
+        {"sentence": "JUSTICE GORSUCH, dissenting from the denial of certiorari."},
+        {"sentence": "is the right to have a jury decide any contested facts"},  # Bad fragment
+    ]
+
+    query = "In Burnett v. United States, what did the Supreme Court decide about supervised release?"
+    
+    canonical = pipeline_module._canonical_answer_fact(
+        query,
+        evidence_sentences,
+        explicit_holding=None,
+    )
+
+    # Should return canonical fact about cert denial and dissent
+    assert canonical is not None
+    assert "denied certiorari" in canonical.lower()
+    assert "burnett" in canonical.lower()
+    assert "gorsuch" in canonical.lower()
+    assert "dissent" in canonical.lower()
+    # Should NOT say "the Court held" or similar
+    assert "court held" not in canonical.lower()
+    assert "court held that" not in canonical.lower()
+
+
+def test_burnett_posture_override_applies_to_posture_queries():
+    """Test that posture override applies to posture/author queries, not holding queries."""
+    # Posture override only applies to posture/author queries per existing logic
+    posture = {
+        "target_case": "Burnett v. United States",
+        "decision_type": "cert_denial",
+        "court_action": "denied certiorari",
+        "opinion_role": "dissent_from_denial",
+        "author": "Gorsuch",
+        "is_separate_opinion": True,
+    }
+
+    # For posture query - should apply override
+    response_posture, meta_posture = pipeline_module._apply_case_posture_response_override(
+        query="In Burnett v. United States, what did the Court do?",
+        response="The Court decided the case.",
+        case_posture=posture,
+        query_intent="posture",
+    )
+    assert meta_posture["status"] == "applied:cert_denial_posture"
+    assert "denied certiorari" in response_posture.lower()
+    assert "gorsuch" in response_posture.lower()
+
+    # For author query - should apply override
+    response_author, meta_author = pipeline_module._apply_case_posture_response_override(
+        query="In Burnett v. United States, who wrote the dissent?",
+        response="Justice Gorsuch wrote about the Sixth Amendment.",
+        case_posture=posture,
+        query_intent="author",
+    )
+    assert meta_author["status"] == "applied:cert_denial_posture"
+
+    # For holding query - should NOT apply posture override (canonical fact handles this)
+    response_holding, meta_holding = pipeline_module._apply_case_posture_response_override(
+        query="What did Burnett hold about supervised release?",
+        response="The Court held something.",
+        case_posture=posture,
+        query_intent="holding",
+    )
+    assert meta_holding["status"] == "not_applied:intent_not_posture_or_author"

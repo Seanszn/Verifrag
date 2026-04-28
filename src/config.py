@@ -164,6 +164,9 @@ class RetrievalConfig:
     sparse_k: int = 20
     rerank_k: int = int(os.getenv("RETRIEVAL_RERANK_K", "8"))
     rrf_k: int = 60
+    query_expansion_mode: str = os.getenv("QUERY_EXPANSION_MODE", "hybrid").strip().lower()
+    query_expansion_max_variants: int = env_int("QUERY_EXPANSION_MAX_VARIANTS", 5)
+    query_expansion_max_terms: int = env_int("QUERY_EXPANSION_MAX_TERMS", 16)
 
 # ============== VERIFICATION ==============
 

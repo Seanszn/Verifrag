@@ -93,6 +93,7 @@ def test_register_query_and_history(monkeypatch, tmp_path: Path):
         assert payload["user_message"]["interaction_id"] == payload["interaction"]["id"]
         assert payload["assistant_message"]["interaction_id"] == payload["interaction"]["id"]
         assert payload["pipeline"]["request_id"] == "test-request-id"
+        assert payload["pipeline"]["include_uploaded_chunks"] is False
         assert payload["pipeline"]["claim_count"] >= 1
         assert payload["pipeline"]["claims"][0]["annotation"]["support_level"] == "unsupported"
         assert payload["pipeline"]["claims"][0]["annotation"]["response_span"]["text"]
@@ -172,6 +173,87 @@ def test_register_query_and_history(monkeypatch, tmp_path: Path):
         ).fetchone()
         assert conversation_state is not None
         assert "Explain Miranda warnings" in conversation_state["summary"]
+
+
+def test_delete_conversation_removes_owned_history(monkeypatch, tmp_path: Path):
+    test_db = Database(tmp_path / "test.db")
+    test_db.initialize()
+
+    monkeypatch.setattr(dependencies, "database", test_db)
+    monkeypatch.setattr(
+        pipeline_module,
+        "load_user_upload_retriever",
+        lambda user_id, *, shared_embedder=None: (None, "unavailable:no_user_upload_index"),
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "pipeline",
+        QueryPipeline(
+            db=test_db,
+            llm=_StubLLM(),
+            retriever=_EmptyRetriever(),
+        ),
+    )
+
+    with TestClient(app) as client:
+        register = client.post(
+            "/api/auth/register",
+            json={"username": "delete_user", "password": "password123"},
+        )
+        assert register.status_code == 201
+        token = register.json()["token"]
+
+        query = client.post(
+            "/api/query",
+            headers=_auth_headers(token),
+            json={"query": "Explain Miranda warnings"},
+        )
+        assert query.status_code == 200
+        payload = query.json()
+        conversation_id = payload["conversation"]["id"]
+        interaction_id = payload["interaction"]["id"]
+
+        delete = client.delete(
+            f"/api/conversations/{conversation_id}",
+            headers=_auth_headers(token),
+        )
+        assert delete.status_code == 204
+        assert delete.content == b""
+
+        conversations = client.get(
+            "/api/conversations",
+            headers=_auth_headers(token),
+        )
+        assert conversations.status_code == 200
+        assert conversations.json() == []
+
+        messages = client.get(
+            f"/api/conversations/{conversation_id}/messages",
+            headers=_auth_headers(token),
+        )
+        assert messages.status_code == 404
+
+    with test_db.connect() as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM conversations WHERE id = ?",
+            (conversation_id,),
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM conversation_state WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM interactions WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM verified_claims WHERE interaction_id = ?",
+            (interaction_id,),
+        ).fetchone()[0] == 0
 
 
 def test_query_can_run_in_generation_only_mode(monkeypatch, tmp_path: Path):
